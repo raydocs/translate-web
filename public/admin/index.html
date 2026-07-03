@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0f17" />
+    <title>Translate Monitor</title>
+    <link rel="stylesheet" href="/admin/admin.css?v=20260703-monitor1" />
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Live Translate</p>
+          <h1>Monitor</h1>
+        </div>
+        <div class="toolbar">
+          <select id="rangeSelect" aria-label="时间范围">
+            <option value="1">1d</option>
+            <option value="7" selected>7d</option>
+            <option value="30">30d</option>
+          </select>
+          <button id="refreshBtn" type="button">刷新</button>
+        </div>
+      </header>
+
+      <section id="authPanel" class="auth-card">
+        <p>输入后台密码</p>
+        <div class="auth-row">
+          <input id="tokenInput" type="password" autocomplete="current-password" placeholder="Admin token" />
+          <button id="saveTokenBtn" type="button">进入</button>
+        </div>
+        <small>只展示指标，不保存录音和聊天内容。</small>
+      </section>
+
+      <section id="errorPanel" class="error-card" hidden></section>
+
+      <section id="dashboard" class="dashboard" hidden>
+        <section class="kpis" aria-label="关键指标">
+          <article class="metric-card hero">
+            <span>24h 会话</span>
+            <strong id="sessions24">0</strong>
+            <small id="sessionsRange">7d 0</small>
+          </article>
+          <article class="metric-card">
+            <span>使用时长</span>
+            <strong id="minutes24">0m</strong>
+            <small id="minutesRange">7d 0m</small>
+          </article>
+          <article class="metric-card">
+            <span>首音频</span>
+            <strong id="latency24">—</strong>
+            <small>越低越好</small>
+          </article>
+          <article class="metric-card danger">
+            <span>错误</span>
+            <strong id="errors24">0</strong>
+            <small id="errorsRange">7d 0</small>
+          </article>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-head">
+            <h2>趋势</h2>
+            <span id="updatedAt">—</span>
+          </div>
+          <div id="dailyChart" class="daily-chart" aria-label="每日趋势"></div>
+        </section>
+
+        <section class="grid-two">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>语言方向</h2>
+            </div>
+            <div id="languagePairs" class="stack-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>设备</h2>
+            </div>
+            <div id="devices" class="stack-list compact"></div>
+            <div id="browsers" class="chips"></div>
+          </article>
+        </section>
+
+        <section class="grid-two">
+          <article class="panel table-panel">
+            <div class="panel-head">
+              <h2>最近会话</h2>
+            </div>
+            <div id="recentSessions" class="table-list"></div>
+          </article>
+
+          <article class="panel table-panel">
+            <div class="panel-head">
+              <h2>错误</h2>
+            </div>
+            <div id="recentErrors" class="table-list"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script src="/admin/admin.js?v=20260703-monitor1" type="module"></script>
+  </body>
+</html>

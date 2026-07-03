@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Live Translate</title>
+    <meta name="description" content="Gemini 3.5 Live Translate 实时语音翻译。" />
+    <link rel="stylesheet" href="/styles.css?v=20260703-live-proxy" />
+  </head>
+  <body>
+    <main class="translate-app">
+      <section class="translate-surface" aria-label="Live translation">
+        <header class="language-bar">
+          <a class="nav-button back-button" href="/" aria-label="返回">‹</a>
+          <select id="sourceLanguageBtn" class="language-select" aria-label="中文显示">
+            <option value="zh-Hans">简体中文</option>
+            <option value="zh-Hant">繁體中文</option>
+          </select>
+          <button id="swapBtn" class="swap-button" type="button" aria-label="重置识别方向">↔</button>
+          <select id="targetLanguageBtn" class="language-select target" aria-label="对方语言">
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="es">Español</option>
+            <option value="fr">Français</option>
+          </select>
+          <p id="connectionStatus" class="menu-button status-pill muted" aria-live="polite">•••</p>
+        </header>
+
+        <div id="listeningPrompt" class="listening-prompt" aria-hidden="true">
+          <p>Listening...</p>
+          <span>请说话...</span>
+        </div>
+
+        <section class="captions" aria-live="polite">
+          <article class="caption-block source-block">
+            <p id="sourceLabel" class="caption-label">说的 · Auto</p>
+            <div id="sourceCaption" class="caption-text source empty">…</div>
+          </article>
+          <div class="divider" aria-hidden="true"></div>
+          <article class="caption-block translation-block">
+            <p id="translationLabel" class="caption-label">翻译 · Auto</p>
+            <div id="translationCaption" class="caption-text translation empty">…</div>
+          </article>
+        </section>
+      </section>
+
+      <footer class="bottom-console">
+        <div class="ambient-orb" aria-hidden="true"></div>
+        <p id="bottomStatus" class="bottom-status">Tap</p>
+        <div class="bottom-actions">
+          <button class="conversation-button" type="button" aria-label="Conversation mode">
+            <span aria-hidden="true">▣</span>
+            Conversation
+          </button>
+          <button id="startBtn" class="mic-button" type="button" aria-label="开始实时翻译">开始</button>
+        </div>
+      </footer>
+
+      <section class="hidden-ui setup-panel" aria-hidden="true">
+        <p id="setupStatus" class="mini-status muted">auto</p>
+        <div id="languagePair" aria-live="polite"></div>
+        <textarea id="languagePrompt" rows="1" spellcheck="false"></textarea>
+        <button id="voiceSetupBtn" type="button">voice</button>
+        <button id="resolveBtn" type="button">ok</button>
+        <button type="button" data-example="我说中文，对方说英文">中 / EN</button>
+      </section>
+
+      <section class="hidden-ui interpreter-panel" aria-hidden="true">
+        <h2 id="modeTitle">Auto</h2>
+        <p id="modeSubtitle">Auto</p>
+        <span id="detectedLanguage">Auto</span>
+        <span id="noiseStatus">Quiet</span>
+        <button id="muteBtn" type="button" disabled>mute</button>
+        <button id="clearBtn" type="button">clear</button>
+        <label>
+          volume
+          <input id="volume" type="range" min="0" max="100" value="92" />
+        </label>
+      </section>
+
+      <section class="hidden-ui transcript-panel" hidden>
+        <p id="sessionStats">0/0</p>
+        <div id="transcriptLog" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script src="/app.js?v=20260703-sessionfix1" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+name = "gemini-live-translate"
+pages_build_output_dir = "public"
+compatibility_date = "2026-07-03"
+
+[[d1_databases]]
+binding = "METRICS_DB"
+database_name = "gemini-live-translate-metrics"
+database_id = "6a77a138-9430-4148-9264-143a5ccea3ab"

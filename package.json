@@ -1,0 +1,21 @@
+{
+  "name": "gemini-live-translate-page",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler pages dev public --compatibility-date=2026-07-03",
+    "deploy": "wrangler pages deploy public --project-name gemini-live-translate",
+    "db:migrate": "wrangler d1 execute gemini-live-translate-metrics --remote --file=migrations/0001_metrics.sql",
+    "check": "wrangler pages functions build --compatibility-date=2026-07-03"
+  },
+  "dependencies": {
+    "@google/genai": "latest"
+  },
+  "devDependencies": {
+    "wrangler": "latest"
+  }
+}
