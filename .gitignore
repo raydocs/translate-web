@@ -8,3 +8,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .DS_Store
+
+# Local runtime logs (may contain secrets)
+logs/
+
+# Test artifacts
+.playwright-mcp/
+
+# Generated assets
+live-translate-qr.png

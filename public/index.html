@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#ffffff" />
     <title>Live Translate</title>
     <meta name="description" content="Gemini 3.5 Live Translate 实时语音翻译。" />
-    <link rel="stylesheet" href="/styles.css?v=20260703-live-proxy" />
+    <link rel="stylesheet" href="/styles.css?v=20260704-geminionly1" />
   </head>
   <body>
     <main class="translate-app">
@@ -33,6 +33,23 @@
           <span>请说话...</span>
         </div>
 
+        <div id="modeChooser" class="mode-chooser" hidden>
+          <p class="mode-chooser-title">你需要哪种翻译？</p>
+          <button id="chooseConversation" class="mode-card" type="button">
+            <strong>同声传译</strong>
+            <span>双向对话 · 实时互译 · 播报翻译语音</span>
+          </button>
+          <button id="chooseText" class="mode-card" type="button">
+            <strong>文字翻译</strong>
+            <span>双向对话 · 实时字幕 · 不播放语音</span>
+          </button>
+        </div>
+
+        <div class="text-prompt" aria-hidden="true">
+          <p>文字翻译</p>
+          <span>点开始后直接对话，双方的话实时翻译成文字，不播放语音</span>
+        </div>
+
         <section class="captions" aria-live="polite">
           <article class="caption-block source-block">
             <p id="sourceLabel" class="caption-label">说的 · Auto</p>
@@ -47,13 +64,12 @@
       </section>
 
       <footer class="bottom-console">
-        <div class="ambient-orb" aria-hidden="true"></div>
+        <div class="mode-switch" role="tablist" aria-label="模式">
+          <button id="modeConversationBtn" class="mode-option active" type="button" role="tab">同声传译</button>
+          <button id="modeTextBtn" class="mode-option" type="button" role="tab">文字翻译</button>
+        </div>
         <p id="bottomStatus" class="bottom-status">Tap</p>
         <div class="bottom-actions">
-          <button class="conversation-button" type="button" aria-label="Conversation mode">
-            <span aria-hidden="true">▣</span>
-            Conversation
-          </button>
           <button id="startBtn" class="mic-button" type="button" aria-label="开始实时翻译">开始</button>
         </div>
       </footer>
@@ -86,6 +102,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=20260703-sessionfix1" type="module"></script>
+    <script src="/app.js?v=20260704-geminionly1" type="module"></script>
   </body>
 </html>

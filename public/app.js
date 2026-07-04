@@ -1,4 +1,15 @@
 const LIVE_MODEL = "gemini-3.5-live-translate-preview";
+const MIC_SAMPLE_RATE = 16000;
+
+// The mic echo gate exists ONLY to break the iOS Safari self-translation
+// loop (WebKit's AEC does not cover Web Audio playback). On desktop, Android
+// and with headphones, the browser's echo cancellation already handles it, so
+// gating there just starves the model of audio and makes translation stutter.
+// Enable the gate on iOS only.
+const IS_IOS =
+  /iPhone|iPad|iPod/.test(navigator.userAgent || "") ||
+  (/Mac/.test(navigator.userAgent || "") && (navigator.maxTouchPoints || 0) > 1);
+const ECHO_GATE_ENABLED = IS_IOS;
 
 function getLiveSocketUrl(targetLanguageCode) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -50,6 +61,11 @@ const elements = {
   translationCaption: document.querySelector("#translationCaption"),
   transcriptLog: document.querySelector("#transcriptLog"),
   sessionStats: document.querySelector("#sessionStats"),
+  modeConversationBtn: document.querySelector("#modeConversationBtn"),
+  modeTextBtn: document.querySelector("#modeTextBtn"),
+  modeChooser: document.querySelector("#modeChooser"),
+  chooseConversation: document.querySelector("#chooseConversation"),
+  chooseText: document.querySelector("#chooseText"),
 };
 
 const languageAliases = [
@@ -80,6 +96,7 @@ const languageAliases = [
 const SETTINGS_KEYS = {
   chineseScript: "liveTranslate.chineseScript",
   counterpartLanguage: "liveTranslate.counterpartLanguage",
+  mode: "liveTranslate.mode",
 };
 
 const chineseScriptOptions = [
@@ -519,9 +536,8 @@ function chooseTargetForSource(sourceCode) {
 
 function updateCaptionLabels() {
   const sourceName = state.activeSourceCode ? getLanguageName(state.activeSourceCode) : "Auto";
-  const targetName = getLanguageName(state.activeTargetCode);
   elements.sourceLabel.textContent = `说的 · ${sourceName}`;
-  elements.translationLabel.textContent = `翻译 · ${targetName}`;
+  elements.translationLabel.textContent = `翻译 · ${getLanguageName(state.activeTargetCode)}`;
   updateLanguageBar();
 }
 
@@ -535,6 +551,12 @@ function swapPrimaryLanguages() {
 function updateActiveLanguages(languageCode) {
   const normalized = normalizeLanguageCode(languageCode);
   if (!normalized) return;
+
+  // The model has no source-language pinning and sometimes misdetects
+  // (e.g. Mandarin as Vietnamese). Only the primary language and the
+  // supported counterpart languages may steer the translation direction;
+  // anything outside that list is ignored.
+  if (!sameLanguage(normalized, state.primaryLanguage.code) && !isCounterpartLanguage(normalized)) return;
 
   const previousTargetCode = state.activeTargetCode;
   const sourceLanguage = getLanguageForCode(normalized);
@@ -550,8 +572,6 @@ function updateActiveLanguages(languageCode) {
   warmTargetSession(nextTarget);
 
   if (previousTargetCode && !sameLanguage(previousTargetCode, state.activeTargetCode)) {
-    resetCaptionBucket("output");
-    renderCaptions();
     state.player?.interrupt();
   }
 
@@ -578,6 +598,7 @@ const state = {
   player: null,
   running: false,
   muted: false,
+  mode: "conversation",
   setupRecognition: null,
   captions: {
     source: { segments: [], current: "", lastIncoming: "", updatedAt: 0 },
@@ -675,6 +696,7 @@ function getSessionMetricSummary(now = Date.now()) {
     audioMs: Math.round(metrics.audioOutputMs),
     audioOutputBytes: metrics.audioOutputBytes,
     voiceChunks: metrics.voiceChunks,
+    echoGatedMs: Math.round(state.mic?.gatedMs || 0),
     errors: metrics.errors,
     openSessions: state.sessions.filter((session) => session.isOpen).length,
     sessions: state.sessions.length,
@@ -787,6 +809,7 @@ function setPrimaryLanguage(code) {
 
   refreshLanguagePair();
   warmTargetSession(state.primaryLanguage);
+  pruneStaleSessions();
   resetOutputForLanguageChange(previousTargetCode);
   normalizeExistingChineseCaptions();
   renderCaptions();
@@ -808,6 +831,7 @@ function setCounterpartLanguage(code, options = {}) {
 
   refreshLanguagePair();
   warmTargetSession(state.counterpartLanguage);
+  pruneStaleSessions();
   if (!options.keepCaptions) resetOutputForLanguageChange(previousTargetCode);
   updateReadyState();
 }
@@ -832,6 +856,7 @@ function setBottomStatus(status) {
     live: "Listening",
     muted: "Paused",
     offline: "Tap",
+    reconnecting: "Reconnecting",
   };
   elements.bottomStatus.textContent = labels[status] || status || "Tap";
 }
@@ -849,8 +874,16 @@ function clipText(value, max = 1200) {
 
 function scrollToLatest() {
   requestAnimationFrame(() => {
-    for (const element of [elements.sourceBlock, elements.translationBlock, elements.translateSurface]) {
+    for (const element of [
+      elements.sourceCaption,
+      elements.translationCaption,
+      elements.sourceBlock,
+      elements.translationBlock,
+      elements.translateSurface,
+    ]) {
       if (!element) continue;
+      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (distanceFromBottom > 96) continue;
       element.scrollTo({
         top: element.scrollHeight,
         behavior: "auto",
@@ -925,7 +958,7 @@ function appendCaptionSegment(kind, text, finished = false) {
   bucket.segments.push(...segments);
   bucket.current = rest;
   bucket.updatedAt = now;
-  if (bucket.segments.length > 18) bucket.segments.splice(0, bucket.segments.length - 18);
+  if (bucket.segments.length > 120) bucket.segments.splice(0, bucket.segments.length - 120);
 }
 
 function renderCaption(element, bucket, emptyText) {
@@ -938,7 +971,7 @@ function renderCaption(element, bucket, emptyText) {
     return;
   }
 
-  for (const value of values.slice(-10)) {
+  for (const value of values) {
     const line = document.createElement("span");
     line.className = "caption-line";
     line.textContent = value;
@@ -1110,8 +1143,117 @@ function warmTargetSession(targetLanguage) {
   if (!state.running || !targetLanguage) return;
   ensureSessionForTarget(targetLanguage).catch((error) => {
     console.error(error);
-    setStatus(elements.connectionStatus, error.message || "Live session error", true);
+    if (!state.running) return;
+    const key = getSessionKey(targetLanguage.code);
+    const stillWanted =
+      key === getSessionKey(state.primaryLanguage.code) || key === getSessionKey(state.counterpartLanguage.code);
+    if (stillWanted) scheduleSessionReconnect(getLanguageForCode(key));
   });
+}
+
+async function rotateSession(oldSession) {
+  if (!state.running || !oldSession || oldSession.rotating || oldSession.closed) return;
+  oldSession.rotating = true;
+  const nonce = state.sessionNonce;
+
+  const replacement = new GeminiTranslateSession({
+    target: oldSession.target,
+    index: state.sessions.length,
+    onEvent: handleSessionEvent,
+  });
+  state.sessions.push(replacement);
+  updateSessionStats();
+
+  try {
+    await replacement.connect();
+    if (nonce !== state.sessionNonce) {
+      replacement.close();
+      state.sessions = state.sessions.filter((session) => session !== replacement);
+      updateSessionStats();
+      return;
+    }
+    oldSession.close();
+    state.sessions = state.sessions.filter((session) => session !== oldSession);
+    postMetric("session_rotate", { targetLanguage: oldSession.target.code });
+  } catch {
+    replacement.close();
+    state.sessions = state.sessions.filter((session) => session !== replacement);
+    oldSession.rotating = false;
+    // If the old session already died while we were connecting, its closed
+    // event was suppressed; kick off the reactive reconnect ourselves.
+    if (oldSession.closed && state.running && nonce === state.sessionNonce) {
+      scheduleSessionReconnect(oldSession.target);
+    }
+  }
+  updateSessionStats();
+}
+
+function pruneStaleSessions() {
+  const keep = new Set([getSessionKey(state.primaryLanguage.code), getSessionKey(state.counterpartLanguage.code)]);
+  const stale = state.sessions.filter((session) => !keep.has(getSessionKey(session.target.code)));
+  if (!stale.length) return;
+  for (const session of stale) session.close();
+  state.sessions = state.sessions.filter((session) => !stale.includes(session));
+  updateSessionStats();
+}
+
+let screenWakeLock = null;
+
+async function acquireWakeLock() {
+  if (!navigator.wakeLock?.request) return;
+  try {
+    screenWakeLock = await navigator.wakeLock.request("screen");
+    screenWakeLock.addEventListener?.("release", () => {
+      screenWakeLock = null;
+    });
+  } catch {
+    screenWakeLock = null;
+  }
+}
+
+function releaseWakeLock() {
+  try {
+    screenWakeLock?.release();
+  } catch {
+    // Already released.
+  }
+  screenWakeLock = null;
+}
+
+const reconnectHistory = new Map();
+
+function scheduleSessionReconnect(target) {
+  if (!state.running || !target) return;
+  const key = getSessionKey(target.code);
+  if (!key) return;
+
+  // While the page is hidden the mic is usually suspended, so a reconnected
+  // session would just be idle-closed again in seconds. The visibilitychange
+  // handler revives dead channels when the user comes back.
+  if (document.hidden) return;
+
+  const now = Date.now();
+  const history = (reconnectHistory.get(key) || []).filter((at) => now - at < 120000);
+  if (history.length >= 6) {
+    setStatus(elements.connectionStatus, `${target.name} 通道已断开`, true);
+    return;
+  }
+  history.push(now);
+  reconnectHistory.set(key, history);
+
+  setStatus(elements.connectionStatus, "reconnecting", true);
+  postMetric("reconnect", { targetLanguage: target.code, attempt: history.length });
+
+  const delay = Math.min(4000, 400 * 2 ** (history.length - 1));
+  window.setTimeout(() => {
+    if (!state.running) return;
+    ensureSessionForTarget(target)
+      .then((session) => {
+        if (!session) return;
+        if (state.running) setStatus(elements.connectionStatus, state.muted ? "muted" : "live", state.muted);
+      })
+      .catch(() => scheduleSessionReconnect(target));
+  }, delay);
 }
 
 async function ensureSessionForTarget(targetLanguage, nonce = state.sessionNonce) {
@@ -1210,6 +1352,12 @@ async function startInterpreter() {
         for (const session of state.sessions) session.sendAudio(base64Audio);
       },
       (noiseState) => updateNoiseStatus(noiseState),
+      {
+        // Only feed playback state to the gate where echo suppression is
+        // actually needed; elsewhere the mic stays full-duplex.
+        isPlaybackActive: ECHO_GATE_ENABLED ? () => state.player?.isPlaying() === true : null,
+        onBargeIn: ECHO_GATE_ENABLED ? (active) => state.player?.duck(active) : null,
+      },
     );
     await state.mic.start();
 
@@ -1219,6 +1367,7 @@ async function startInterpreter() {
 
     state.running = true;
     state.muted = false;
+    acquireWakeLock();
     document.body.classList.add("running");
     elements.startBtn.textContent = "停止";
     elements.muteBtn.textContent = "静音";
@@ -1258,6 +1407,8 @@ function stopInterpreter(options = {}) {
   stopMetricsHeartbeat();
 
   state.sessionNonce += 1;
+  reconnectHistory.clear();
+  releaseWakeLock();
   state.mic?.stop();
   state.mic = null;
 
@@ -1318,8 +1469,7 @@ function handleSessionEvent(event) {
         { keepalive: true },
       );
     }
-    state.mic?.duckForMs(audioMs + 280);
-    state.player?.play(event.data);
+    if (state.mode !== "text") state.player?.play(event.data);
     return;
   }
 
@@ -1347,12 +1497,31 @@ function handleSessionEvent(event) {
     return;
   }
 
+  if (event.type === "goAway") {
+    rotateSession(event.session);
+    return;
+  }
+
+  if (event.type === "closed") {
+    state.sessions = state.sessions.filter((session) => !session.closed);
+    updateSessionStats();
+    // A rotating session is being replaced deliberately; its successor is
+    // already connecting, so skip the reactive reconnect.
+    if (event.session?.rotating) return;
+    scheduleSessionReconnect(event.target);
+    return;
+  }
+
   if (event.type === "error") {
     recordMetricError(event.message || "Live session error", {
       stage: "live",
       targetLanguage: event.target?.code,
     });
-    setStatus(elements.connectionStatus, event.message || "Live session error", true);
+    // Mid-session drops are handled by the reconnect path; only surface
+    // errors when we are not in a position to recover automatically.
+    if (!state.running) {
+      setStatus(elements.connectionStatus, event.message || "Live session error", true);
+    }
   }
 }
 
@@ -1445,6 +1614,7 @@ class GeminiTranslateSession {
     this.readyReject = null;
     this.errorReported = false;
     this.createdAt = Date.now();
+    this.lastDrainAt = Date.now();
   }
 
   connect() {
@@ -1489,13 +1659,17 @@ class GeminiTranslateSession {
         if (!this.isReady) this.readyReject?.(error);
       };
       socket.onclose = () => {
+        const wasReady = this.isReady;
         this.isOpen = false;
         this.isReady = false;
         this.closed = true;
-        if (!this.manualClose && !this.isReady) {
+        if (!this.manualClose && !wasReady) {
           this.readyReject?.(new Error(`${this.target.name} 通道已关闭`));
         }
         updateSessionStats();
+        if (!this.manualClose) {
+          this.onEvent({ type: "closed", target: this.target, sessionIndex: this.index, session: this });
+        }
       };
     });
   }
@@ -1547,6 +1721,11 @@ class GeminiTranslateSession {
       return;
     }
 
+    if (data.goAway) {
+      this.onEvent({ type: "goAway", target: this.target, sessionIndex: this.index, session: this });
+      return;
+    }
+
     const content = data.serverContent || {};
     const inputTranscription = content.inputTranscription || data.inputTranscription;
     const outputTranscription = content.outputTranscription || data.outputTranscription;
@@ -1585,11 +1764,29 @@ class GeminiTranslateSession {
 
   sendAudio(base64Audio) {
     if (!this.isReady) return;
+    const buffered = this.socket?.bufferedAmount || 0;
+    const now = Date.now();
+    if (buffered < 16384) this.lastDrainAt = now;
+    // Zombie-socket watchdog: after mobile network transitions the socket can
+    // stay "open" while nothing drains, so the model goes deaf without any
+    // error event. Force-close so the reconnect path revives the channel.
+    if (now - this.lastDrainAt > 6000) {
+      try {
+        this.socket?.close();
+      } catch {
+        // Already closing.
+      }
+      return;
+    }
+    // Backpressure guard: on slow uplinks the buffer grows unbounded and the
+    // connection eventually dies. Dropping frames beyond ~2s of backlog keeps
+    // the channel alive; the model tolerates gaps.
+    if (buffered > 131072) return;
     this.send({
       realtimeInput: {
         audio: {
           data: base64Audio,
-          mimeType: "audio/pcm;rate=16000",
+          mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`,
         },
       },
     });
@@ -1612,20 +1809,30 @@ class GeminiTranslateSession {
 }
 
 class MicrophoneStreamer {
-  constructor(onAudio, onNoiseState) {
+  // RMS a captured frame must reach, while translated audio is playing, to
+  // count as the user talking over the playback rather than speaker echo.
+  static BARGE_IN_RMS = 0.04;
+
+  constructor(onAudio, onNoiseState, options = {}) {
     this.onAudio = onAudio;
     this.onNoiseState = onNoiseState;
+    this.isPlaybackActive = options.isPlaybackActive || null;
+    this.onBargeIn = options.onBargeIn || null;
     this.stream = null;
     this.context = null;
     this.worklet = null;
     this.scriptProcessor = null;
     this.source = null;
     this.highpass = null;
-    this.lowpass = null;
     this.muted = false;
-    this.inputSampleRate = 16000;
-    this.duckingUntil = 0;
-    this.noiseGate = new AdaptiveNoiseGate((noiseState) => this.onNoiseState?.(noiseState));
+    this.inputSampleRate = MIC_SAMPLE_RATE;
+    this.voiceActive = false;
+    this.lastNoiseEmitAt = 0;
+    this.preRoll = [];
+    this.loudFrames = 0;
+    this.bargeInUntil = 0;
+    this.bargeInActive = false;
+    this.gatedMs = 0;
   }
 
   async start() {
@@ -1639,41 +1846,65 @@ class MicrophoneStreamer {
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: { ideal: 1 },
-        sampleRate: { ideal: 16000 },
+        sampleRate: { ideal: MIC_SAMPLE_RATE },
       },
     });
 
-    this.context = createAudioContext({ sampleRate: 16000, latencyHint: "interactive" });
+    this.context = createAudioContext({ sampleRate: MIC_SAMPLE_RATE, latencyHint: "interactive" });
     this.inputSampleRate = this.context.sampleRate;
 
     this.source = this.context.createMediaStreamSource(this.stream);
     this.highpass = this.context.createBiquadFilter();
     this.highpass.type = "highpass";
-    this.highpass.frequency.value = 120;
+    this.highpass.frequency.value = 100;
     this.highpass.Q.value = 0.7;
-
-    this.lowpass = this.context.createBiquadFilter();
-    this.lowpass.type = "lowpass";
-    this.lowpass.frequency.value = 3800;
-    this.lowpass.Q.value = 0.7;
 
     const handleSamples = (data) => {
       if (this.muted) return;
-      const samples = MicrophoneStreamer.resampleTo16k(data, this.inputSampleRate);
-      const chunks = this.noiseGate.process(samples, { ducking: Date.now() < this.duckingUntil });
-      for (const chunk of chunks) {
-        const pcm = MicrophoneStreamer.float32ToPCM16(chunk);
-        this.onAudio(arrayBufferToBase64(pcm));
+      const samples = MicrophoneStreamer.resampleToMicRate(data, this.inputSampleRate);
+      const rms = this.trackVoiceLevel(samples);
+      const playing = this.isPlaybackActive?.() === true;
+      const now = Date.now();
+
+      if (playing) {
+        // iOS Safari's echo cancellation does not cover Web Audio playback,
+        // so while translated speech is on the speaker the mic mostly hears
+        // that speech back. Unless the user is clearly talking over it
+        // (barge-in), hold frames back to break the self-translation loop.
+        this.loudFrames = rms >= MicrophoneStreamer.BARGE_IN_RMS ? this.loudFrames + 1 : Math.max(0, this.loudFrames - 1);
+        if (this.loudFrames >= 3) this.bargeInUntil = now + 900;
+
+        if (now > this.bargeInUntil) {
+          this.setBargeIn(false);
+          this.preRoll.push(samples);
+          if (this.preRoll.length > 12) this.preRoll.shift();
+          this.gatedMs += (samples.length / MIC_SAMPLE_RATE) * 1000;
+          return;
+        }
+
+        this.setBargeIn(true);
+        if (this.preRoll.length) {
+          const buffered = this.preRoll;
+          this.preRoll = [];
+          for (const chunk of buffered) this.emitFrame(chunk);
+        }
+      } else {
+        this.loudFrames = 0;
+        this.bargeInUntil = 0;
+        this.preRoll = [];
+        this.setBargeIn(false);
       }
+
+      this.emitFrame(samples);
     };
 
-    this.source.connect(this.highpass).connect(this.lowpass);
+    this.source.connect(this.highpass);
 
     if (this.context.audioWorklet && window.AudioWorkletNode) {
       await this.context.audioWorklet.addModule("/audio-worklets/capture.worklet.js");
       this.worklet = new AudioWorkletNode(this.context, "audio-capture-processor");
       this.worklet.port.onmessage = (event) => handleSamples(event.data);
-      this.lowpass.connect(this.worklet);
+      this.highpass.connect(this.worklet);
       return this.context.resume();
     }
 
@@ -1683,7 +1914,7 @@ class MicrophoneStreamer {
       handleSamples(new Float32Array(input));
       event.outputBuffer.getChannelData(0).fill(0);
     };
-    this.lowpass.connect(this.scriptProcessor);
+    this.highpass.connect(this.scriptProcessor);
     this.scriptProcessor.connect(this.context.destination);
     await this.context.resume();
   }
@@ -1699,10 +1930,10 @@ class MicrophoneStreamer {
     return buffer;
   }
 
-  static resampleTo16k(float32Array, inputSampleRate) {
-    if (inputSampleRate === 16000) return float32Array;
+  static resampleToMicRate(float32Array, inputSampleRate) {
+    if (inputSampleRate === MIC_SAMPLE_RATE) return float32Array;
 
-    const ratio = inputSampleRate / 16000;
+    const ratio = inputSampleRate / MIC_SAMPLE_RATE;
     const outputLength = Math.max(1, Math.round(float32Array.length / ratio));
     const output = new Float32Array(outputLength);
 
@@ -1717,180 +1948,58 @@ class MicrophoneStreamer {
     return output;
   }
 
-  setMuted(muted) {
-    this.muted = muted;
-    if (muted) this.noiseGate.reset();
+  emitFrame(samples) {
+    const pcm = MicrophoneStreamer.float32ToPCM16(samples);
+    this.onAudio(arrayBufferToBase64(pcm));
   }
 
-  duckForMs(durationMs) {
-    this.duckingUntil = Math.max(this.duckingUntil, Date.now() + Math.max(0, durationMs));
+  setBargeIn(active) {
+    if (active === this.bargeInActive) return;
+    this.bargeInActive = active;
+    this.onBargeIn?.(active);
+  }
+
+  trackVoiceLevel(samples) {
+    let sum = 0;
+    for (let i = 0; i < samples.length; i += 1) sum += samples[i] * samples[i];
+    const rms = Math.sqrt(sum / Math.max(1, samples.length));
+    const active = this.voiceActive ? rms > 0.008 : rms > 0.015;
+    const now = Date.now();
+    if (active !== this.voiceActive || now - this.lastNoiseEmitAt >= 300) {
+      this.voiceActive = active;
+      this.lastNoiseEmitAt = now;
+      this.onNoiseState?.({ active, rms });
+    }
+    return rms;
+  }
+
+  setMuted(muted) {
+    this.muted = muted;
+    if (muted && this.voiceActive) {
+      this.voiceActive = false;
+      this.onNoiseState?.({ active: false, rms: 0 });
+    }
   }
 
   stop() {
     this.worklet?.disconnect();
     this.worklet?.port.close();
     this.scriptProcessor?.disconnect();
-    this.lowpass?.disconnect();
     this.highpass?.disconnect();
     this.source?.disconnect();
     this.stream?.getTracks().forEach((track) => track.stop());
     this.context?.close();
     this.worklet = null;
     this.scriptProcessor = null;
-    this.lowpass = null;
     this.highpass = null;
     this.source = null;
     this.stream = null;
     this.context = null;
-    this.duckingUntil = 0;
-    this.noiseGate.reset();
-  }
-}
-
-class AdaptiveNoiseGate {
-  constructor(onStateChange) {
-    this.onStateChange = onStateChange;
-    this.noiseFloor = 0.007;
-    this.active = false;
-    this.hangover = 0;
-    this.speechFrames = 0;
+    this.voiceActive = false;
     this.preRoll = [];
-    this.preRollLimit = 14;
-    this.hangoverLimit = 10;
-    this.startFramesRequired = 2;
-    this.calibrationFramesRemaining = 12;
-    this.calibrationRms = [];
-  }
-
-  process(samples, options = {}) {
-    const features = AdaptiveNoiseGate.analyze(samples);
-    const { rms } = features;
-    const ducking = options.ducking === true;
-    const duckingMultiplier = ducking ? 2.6 : 1;
-    const startThreshold = Math.max(0.016, this.noiseFloor * 3.7) * duckingMultiplier;
-    const releaseThreshold = Math.max(0.0085, this.noiseFloor * 1.75) * (ducking ? 1.9 : 1);
-    const speechLike = this.isSpeechLike(features, startThreshold);
-    const potentialSpeech = rms > startThreshold && speechLike;
-
-    if (ducking && !this.active) {
-      this.speechFrames = 0;
-      this.preRoll = [];
-      return [];
-    }
-
-    this.preRoll.push(samples);
-    if (this.preRoll.length > this.preRollLimit) this.preRoll.shift();
-
-    if (this.calibrationFramesRemaining > 0) {
-      this.calibrationFramesRemaining -= 1;
-      this.calibrationRms.push(rms);
-      if (this.calibrationFramesRemaining === 0) this.finishCalibration();
-      return [];
-    }
-
-    if (!this.active) {
-      this.updateNoiseFloor(rms, potentialSpeech);
-
-      this.speechFrames = potentialSpeech ? this.speechFrames + 1 : Math.max(0, this.speechFrames - 1);
-      if (this.speechFrames < this.startFramesRequired) return [];
-
-      this.active = true;
-      this.speechFrames = 0;
-      this.hangover = this.hangoverLimit;
-      this.emitState(rms);
-      const chunks = this.preRoll;
-      this.preRoll = [];
-      return chunks;
-    }
-
-    const keepVoice = rms > releaseThreshold && (speechLike || rms > startThreshold * 0.86);
-    if (keepVoice) {
-      this.hangover = this.hangoverLimit;
-    } else {
-      this.hangover -= ducking ? 3 : 1;
-    }
-
-    if (this.hangover <= 0) {
-      this.active = false;
-      this.speechFrames = 0;
-      this.preRoll = [];
-      this.updateNoiseFloor(rms, false);
-      this.emitState(rms);
-      return [];
-    }
-
-    return [samples];
-  }
-
-  finishCalibration() {
-    const values = this.calibrationRms.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
-    this.calibrationRms = [];
-    if (!values.length) return;
-
-    const index = Math.min(values.length - 1, Math.max(0, Math.floor(values.length * 0.35)));
-    const estimate = values[index] * 1.35;
-    this.noiseFloor = Math.max(0.006, Math.min(0.022, estimate));
-  }
-
-  updateNoiseFloor(rms, potentialSpeech) {
-    const cappedRms = Math.min(rms, 0.08);
-    if (potentialSpeech) {
-      this.noiseFloor = this.noiseFloor * 0.995 + cappedRms * 0.005;
-      return;
-    }
-
-    this.noiseFloor = this.noiseFloor * 0.93 + Math.min(cappedRms, this.noiseFloor * 1.8) * 0.07;
-  }
-
-  isSpeechLike(features, threshold) {
-    const { rms, peak, zeroCrossRate, crest } = features;
-    if (rms < threshold || peak < 0.024) return false;
-
-    const hasVoiceTexture = crest >= 1.65 || zeroCrossRate >= 0.032;
-    const normalVoiceTexture = zeroCrossRate >= 0.012 && zeroCrossRate <= 0.28 && crest <= 14 && hasVoiceTexture;
-    const loudLowVoice = rms > threshold * 1.45 && zeroCrossRate >= 0.004 && zeroCrossRate <= 0.24 && crest >= 1.55 && crest <= 16;
-    const loudUnvoicedSpeech = rms > threshold * 1.65 && zeroCrossRate >= 0.05 && zeroCrossRate <= 0.36 && crest <= 12;
-    return normalVoiceTexture || loudLowVoice || loudUnvoicedSpeech;
-  }
-
-  reset() {
-    this.active = false;
-    this.hangover = 0;
-    this.speechFrames = 0;
-    this.preRoll = [];
-    this.calibrationFramesRemaining = 12;
-    this.calibrationRms = [];
-    this.emitState(0);
-  }
-
-  emitState(rms) {
-    this.onStateChange?.({ active: this.active, rms, noiseFloor: this.noiseFloor });
-  }
-
-  static analyze(samples) {
-    let sum = 0;
-    let peak = 0;
-    let crossings = 0;
-    let previousSign = 0;
-
-    for (let i = 0; i < samples.length; i += 1) {
-      const sample = samples[i];
-      const abs = Math.abs(sample);
-      sum += sample * sample;
-      if (abs > peak) peak = abs;
-
-      const sign = abs > 0.003 ? Math.sign(sample) : 0;
-      if (sign && previousSign && sign !== previousSign) crossings += 1;
-      if (sign) previousSign = sign;
-    }
-
-    const rms = Math.sqrt(sum / samples.length);
-    return {
-      rms,
-      peak,
-      zeroCrossRate: crossings / samples.length,
-      crest: peak / Math.max(rms, 0.000001),
-    };
+    this.loudFrames = 0;
+    this.bargeInUntil = 0;
+    this.bargeInActive = false;
   }
 }
 
@@ -1902,6 +2011,24 @@ class AudioPlayer {
     this.sources = new Set();
     this.fallbackPlayTime = 0;
     this.inputSampleRate = 24000;
+    this.playbackEndsAt = 0;
+    this.volume = 0.92;
+    this.ducked = false;
+  }
+
+  isPlaying() {
+    return Date.now() < this.playbackEndsAt;
+  }
+
+  duck(active) {
+    if (this.ducked === active) return;
+    this.ducked = active;
+    this.applyVolume();
+  }
+
+  applyVolume() {
+    if (!this.gain) return;
+    this.gain.gain.value = Math.max(0, Math.min(1, this.volume)) * (this.ducked ? 0.25 : 1);
   }
 
   async init() {
@@ -1909,6 +2036,7 @@ class AudioPlayer {
     this.context = createAudioContext({ sampleRate: 24000, latencyHint: "interactive" });
     this.gain = this.context.createGain();
     this.gain.connect(this.context.destination);
+    this.applyVolume();
 
     if (this.context.audioWorklet && window.AudioWorkletNode) {
       await this.context.audioWorklet.addModule("/audio-worklets/playback.worklet.js");
@@ -1920,6 +2048,8 @@ class AudioPlayer {
   }
 
   async play(base64Audio) {
+    const durationMs = AudioPlayer.getBase64PcmDurationMs(base64Audio);
+    this.playbackEndsAt = Math.max(this.playbackEndsAt, Date.now()) + durationMs;
     await this.init();
     if (this.context.state === "suspended") await this.context.resume();
     const bytes = base64ToBytes(base64Audio);
@@ -1974,7 +2104,8 @@ class AudioPlayer {
   }
 
   setVolume(volume) {
-    if (this.gain) this.gain.gain.value = Math.max(0, Math.min(1, volume));
+    this.volume = volume;
+    this.applyVolume();
   }
 
   interrupt() {
@@ -1988,6 +2119,58 @@ class AudioPlayer {
     }
     this.sources.clear();
     this.fallbackPlayTime = this.context?.currentTime || 0;
+    this.playbackEndsAt = 0;
+  }
+}
+
+function setMode(mode, options = {}) {
+  const next = mode === "text" ? "text" : "conversation";
+  if (!options.force && next === state.mode) return;
+  state.mode = next;
+  try {
+    localStorage.setItem(SETTINGS_KEYS.mode, next);
+  } catch {
+    // Ignore blocked storage.
+  }
+
+  // Captions-only mode keeps the live session running; just silence the
+  // translated speech that is currently playing.
+  if (next === "text") state.player?.interrupt();
+
+  document.body.classList.toggle("text-mode", next === "text");
+  elements.modeConversationBtn.classList.toggle("active", next === "conversation");
+  elements.modeTextBtn.classList.toggle("active", next === "text");
+}
+
+function chooseMode(mode) {
+  document.body.classList.remove("choose-mode");
+  elements.modeChooser.hidden = true;
+  setMode(mode, { force: true });
+}
+
+elements.modeConversationBtn.addEventListener("click", () => setMode("conversation"));
+elements.modeTextBtn.addEventListener("click", () => setMode("text"));
+elements.chooseConversation.addEventListener("click", () => chooseMode("conversation"));
+elements.chooseText.addEventListener("click", () => chooseMode("text"));
+
+// First visit: ask what the user needs before showing either console.
+let savedMode = null;
+try {
+  savedMode = localStorage.getItem(SETTINGS_KEYS.mode);
+} catch {
+  savedMode = null;
+}
+
+if (savedMode === "conversation" || savedMode === "text") {
+  setMode(savedMode, { force: true });
+} else {
+  setMode("conversation", { force: true });
+  document.body.classList.add("choose-mode");
+  elements.modeChooser.hidden = false;
+  try {
+    localStorage.removeItem(SETTINGS_KEYS.mode);
+  } catch {
+    // Ignore blocked storage.
   }
 }
 
@@ -2016,7 +2199,18 @@ function resumeAudioContexts() {
 window.addEventListener("pointerdown", resumeAudioContexts, { passive: true });
 window.addEventListener("touchend", resumeAudioContexts, { passive: true });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") resumeAudioContexts();
+  if (document.visibilityState !== "visible") return;
+  resumeAudioContexts();
+  // iOS Safari kills WebSockets while the page is backgrounded; revive
+  // any dead sessions as soon as the user comes back.
+  if (state.running) {
+    if (!screenWakeLock) acquireWakeLock();
+    state.sessions = state.sessions.filter((session) => !session.closed);
+    updateSessionStats();
+    for (const target of uniqueLanguages([state.primaryLanguage, state.counterpartLanguage])) {
+      warmTargetSession(target);
+    }
+  }
 });
 
 window.addEventListener("beforeunload", () => stopInterpreter({ keepStatus: true, beacon: true }));
