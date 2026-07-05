@@ -66,6 +66,10 @@ const elements = {
   modeChooser: document.querySelector("#modeChooser"),
   chooseConversation: document.querySelector("#chooseConversation"),
   chooseText: document.querySelector("#chooseText"),
+  editSheet: document.querySelector("#editSheet"),
+  editSheetInput: document.querySelector("#editSheetInput"),
+  editSheetCancel: document.querySelector("#editSheetCancel"),
+  editSheetConfirm: document.querySelector("#editSheetConfirm"),
 };
 
 const languageAliases = [
@@ -961,7 +965,7 @@ function appendCaptionSegment(kind, text, finished = false) {
   if (bucket.segments.length > 120) bucket.segments.splice(0, bucket.segments.length - 120);
 }
 
-function renderCaption(element, bucket, emptyText) {
+function renderCaption(element, bucket, emptyText, options = {}) {
   const values = [...bucket.segments, bucket.current.trim()].filter(Boolean);
   element.replaceChildren();
   element.classList.toggle("empty", values.length === 0);
@@ -971,16 +975,19 @@ function renderCaption(element, bucket, emptyText) {
     return;
   }
 
-  for (const value of values) {
+  const segmentCount = bucket.segments.length;
+  values.forEach((value, index) => {
     const line = document.createElement("span");
     line.className = "caption-line";
+    // Finished segments are correctable; the in-flight tail is not.
+    if (options.editable && index < segmentCount) line.classList.add("editable-line");
     line.textContent = value;
     element.append(line);
-  }
+  });
 }
 
 function renderCaptions() {
-  renderCaption(elements.sourceCaption, state.captions.source, "…");
+  renderCaption(elements.sourceCaption, state.captions.source, "…", { editable: true });
   renderCaption(elements.translationCaption, state.captions.output, "…");
   scrollToLatest();
 }
@@ -1221,11 +1228,17 @@ function releaseWakeLock() {
 }
 
 const reconnectHistory = new Map();
+const pendingReconnects = new Set();
 
 function scheduleSessionReconnect(target) {
   if (!state.running || !target) return;
   const key = getSessionKey(target.code);
   if (!key) return;
+
+  // Multiple paths (closed event, warm failure, rotation fallback) can all
+  // ask for a reconnect at once; one in-flight chain per channel is enough.
+  // A second chain defeats the backoff and can trip upstream rate limits.
+  if (pendingReconnects.has(key)) return;
 
   // While the page is hidden the mic is usually suspended, so a reconnected
   // session would just be idle-closed again in seconds. The visibilitychange
@@ -1245,14 +1258,22 @@ function scheduleSessionReconnect(target) {
   postMetric("reconnect", { targetLanguage: target.code, attempt: history.length });
 
   const delay = Math.min(4000, 400 * 2 ** (history.length - 1));
+  pendingReconnects.add(key);
   window.setTimeout(() => {
-    if (!state.running) return;
+    if (!state.running) {
+      pendingReconnects.delete(key);
+      return;
+    }
     ensureSessionForTarget(target)
       .then((session) => {
+        pendingReconnects.delete(key);
         if (!session) return;
         if (state.running) setStatus(elements.connectionStatus, state.muted ? "muted" : "live", state.muted);
       })
-      .catch(() => scheduleSessionReconnect(target));
+      .catch(() => {
+        pendingReconnects.delete(key);
+        scheduleSessionReconnect(target);
+      });
   }, delay);
 }
 
@@ -1408,6 +1429,7 @@ function stopInterpreter(options = {}) {
 
   state.sessionNonce += 1;
   reconnectHistory.clear();
+  pendingReconnects.clear();
   releaseWakeLock();
   state.mic?.stop();
   state.mic = null;
@@ -1658,13 +1680,24 @@ class GeminiTranslateSession {
         this.emitError(error.message);
         if (!this.isReady) this.readyReject?.(error);
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         const wasReady = this.isReady;
         this.isOpen = false;
         this.isReady = false;
         this.closed = true;
+        const reason = String(event?.reason || "").slice(0, 140);
+        if (!this.manualClose) {
+          // Keep the upstream close reason visible in metrics; "quota" vs
+          // "idle" vs network tells completely different stories.
+          postMetric("channel_closed", {
+            targetLanguage: this.target.code,
+            closeCode: event?.code || 0,
+            closeReason: reason,
+            wasReady,
+          });
+        }
         if (!this.manualClose && !wasReady) {
-          this.readyReject?.(new Error(`${this.target.name} 通道已关闭`));
+          this.readyReject?.(new Error(`${this.target.name} 通道已关闭${reason ? `：${reason}` : ""}`));
         }
         updateSessionStats();
         if (!this.manualClose) {
@@ -2141,6 +2174,89 @@ function setMode(mode, options = {}) {
   elements.modeConversationBtn.classList.toggle("active", next === "conversation");
   elements.modeTextBtn.classList.toggle("active", next === "text");
 }
+
+// Correction flow: tap a recognized line, fix it, re-translate via the
+// text model. The live session keeps running untouched.
+const editState = { originalText: null };
+
+function inferSourceLanguage(text) {
+  const value = String(text || "");
+  if (/[\u3040-\u30ff]/.test(value)) return "ja";
+  if (/[\uac00-\ud7af]/.test(value)) return "ko";
+  if (/[\u4e00-\u9fff]/.test(value)) return state.primaryLanguage.code;
+  if (/[A-Za-z]/.test(value)) {
+    return sameLanguage(state.counterpartLanguage.code, "zh") ? "en" : state.counterpartLanguage.code;
+  }
+  return "";
+}
+
+function openEditSheet(text) {
+  editState.originalText = text;
+  elements.editSheetInput.value = text;
+  elements.editSheetConfirm.textContent = "重新翻译";
+  elements.editSheet.hidden = false;
+  elements.editSheetInput.focus();
+}
+
+function closeEditSheet() {
+  elements.editSheet.hidden = true;
+  editState.originalText = null;
+}
+
+async function confirmEditSheet() {
+  const original = editState.originalText;
+  const edited = elements.editSheetInput.value.trim();
+  if (!edited) return;
+  if (edited === String(original || "").trim()) {
+    closeEditSheet();
+    return;
+  }
+
+  const button = elements.editSheetConfirm;
+  button.disabled = true;
+  button.textContent = "…";
+
+  try {
+    const sourceCode = inferSourceLanguage(edited) || state.primaryLanguage.code;
+    const target = chooseTargetForSource(sourceCode);
+    const response = await fetch("/api/translate-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: edited, targetLanguageCode: target.code }),
+    });
+    if (!response.ok) throw new Error(`correction translate failed: ${response.status}`);
+    const data = await response.json();
+
+    const sourceBucket = state.captions.source;
+    const index = sourceBucket.segments.lastIndexOf(original);
+    if (index >= 0) sourceBucket.segments[index] = edited;
+    else sourceBucket.segments.push(edited);
+
+    const outputBucket = state.captions.output;
+    outputBucket.segments.push(`✎ ${String(data.translation || "").trim()}`);
+    if (outputBucket.segments.length > 120) outputBucket.segments.splice(0, outputBucket.segments.length - 120);
+    outputBucket.updatedAt = Date.now();
+    document.body.classList.add("has-captions");
+
+    renderCaptions();
+    postMetric("correction", { targetLanguage: target.code });
+    closeEditSheet();
+  } catch (error) {
+    console.error(error);
+    recordMetricError(error, { stage: "correction" });
+    button.textContent = "重试";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+elements.sourceCaption.addEventListener("click", (event) => {
+  const line = event.target.closest(".caption-line.editable-line");
+  if (!line) return;
+  openEditSheet(line.textContent);
+});
+elements.editSheetCancel.addEventListener("click", closeEditSheet);
+elements.editSheetConfirm.addEventListener("click", confirmEditSheet);
 
 function chooseMode(mode) {
   document.body.classList.remove("choose-mode");

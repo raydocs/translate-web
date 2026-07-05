@@ -1,0 +1,11 @@
+name = "gemini-us-relay"
+main = "src/index.js"
+compatibility_date = "2026-07-03"
+
+[[durable_objects.bindings]]
+name = "GEMINI_RELAY"
+class_name = "GeminiRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GeminiRelay"]

@@ -6,3 +6,11 @@ compatibility_date = "2026-07-03"
 binding = "METRICS_DB"
 database_name = "gemini-live-translate-metrics"
 database_id = "6a77a138-9430-4148-9264-143a5ccea3ab"
+
+[placement]
+mode = "smart"
+
+[[durable_objects.bindings]]
+name = "GEMINI_RELAY"
+class_name = "GeminiRelay"
+script_name = "gemini-us-relay"

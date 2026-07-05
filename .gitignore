@@ -16,4 +16,4 @@ logs/
 .playwright-mcp/
 
 # Generated assets
-live-translate-qr.png
+*-qr.png

@@ -204,6 +204,96 @@ body.choose-mode .bottom-console {
   visibility: hidden;
 }
 
+.edit-sheet {
+  position: fixed;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  bottom: var(--console-height);
+  display: grid;
+  gap: 10px;
+  padding: 16px var(--page-x) 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 -8px 24px rgba(22, 24, 28, 0.06);
+}
+
+.edit-sheet[hidden] {
+  display: none;
+}
+
+.edit-sheet-label {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.edit-sheet textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: none;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1.05rem;
+  line-height: 1.5;
+  resize: none;
+}
+
+.edit-sheet textarea:focus {
+  border-color: var(--ink);
+}
+
+.edit-sheet-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.sheet-btn {
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.sheet-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.sheet-btn.solid {
+  background: var(--ink);
+  color: #ffffff;
+}
+
+.sheet-btn:disabled {
+  opacity: 0.4;
+}
+
+.caption-line.editable-line {
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.caption-line.editable-line:active {
+  background: rgba(22, 24, 28, 0.05);
+}
+
+.source-block .caption-label::after {
+  content: " · 点按文字可修正";
+  letter-spacing: 0.05em;
+  opacity: 0.65;
+  text-transform: none;
+}
+
 .mode-chooser-title {
   margin: 0 0 6px;
   color: var(--muted);

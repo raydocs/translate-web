@@ -151,6 +151,26 @@ export const onRequest = async ({ request, env }) => {
     return json({ error: "Unsupported targetLanguageCode." }, 400);
   }
 
+  // Route Gemini traffic through a Durable Object pinned to North America:
+  // Google rejects API calls originating from unsupported regions (e.g. the
+  // Hong Kong colo that serves mainland-China visitors), so the upstream hop
+  // must happen from a supported location regardless of the user's colo.
+  if (env.GEMINI_RELAY) {
+    try {
+      const id = env.GEMINI_RELAY.idFromName("us-relay-v1");
+      const stub = env.GEMINI_RELAY.get(id, { locationHint: "wnam" });
+      const relayRequest = new Request(request.url, {
+        headers: {
+          Upgrade: "websocket",
+          "X-Goog-Key": env.GEMINI_API_KEY,
+        },
+      });
+      return await stub.fetch(relayRequest);
+    } catch (error) {
+      console.error("US relay failed, falling back to direct connect", error?.message || error);
+    }
+  }
+
   let token;
   try {
     token = await createLiveToken(env, targetLanguageCode);
