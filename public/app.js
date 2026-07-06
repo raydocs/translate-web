@@ -3096,6 +3096,9 @@ elements.targetLanguageBtn.replaceChildren(
   }),
 );
 
+const buildTag = document.querySelector("#buildTag");
+if (buildTag) buildTag.textContent = APP_BUILD;
+
 renderCaptions();
 updateReadyState();
 setStatus(elements.connectionStatus, "offline", true);

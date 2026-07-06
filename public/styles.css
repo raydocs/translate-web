@@ -744,6 +744,18 @@ body.flip-view .translation-block .caption-text {
   color: #ffffff;
 }
 
+.build-tag {
+  position: absolute;
+  right: 10px;
+  bottom: max(6px, env(safe-area-inset-bottom));
+  margin: 0;
+  color: var(--muted);
+  opacity: 0.55;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+}
+
 .bottom-status {
   display: inline-grid;
   grid-auto-flow: column;
@@ -760,7 +772,19 @@ body.flip-view .translation-block .caption-text {
   text-transform: uppercase;
 }
 
-body.running .bottom-status {
+body.running .build-tag {
+  position: absolute;
+  right: 10px;
+  bottom: max(6px, env(safe-area-inset-bottom));
+  margin: 0;
+  color: var(--muted);
+  opacity: 0.55;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+}
+
+.bottom-status {
   color: var(--accent);
 }
 
@@ -961,7 +985,19 @@ body.running .mic-button {
     --console-base: 84px;
   }
 
-  .bottom-status {
+  .build-tag {
+  position: absolute;
+  right: 10px;
+  bottom: max(6px, env(safe-area-inset-bottom));
+  margin: 0;
+  color: var(--muted);
+  opacity: 0.55;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+}
+
+.bottom-status {
     display: none;
   }
 
