@@ -641,7 +641,7 @@ function updateActiveLanguages(languageCode) {
   warmTargetSession(nextTarget);
 
   if (previousTargetCode && !sameLanguage(previousTargetCode, state.activeTargetCode)) {
-    state.player?.interrupt();
+    if (!state.player?.consecutive) state.player?.interrupt();
   }
 
   updateCaptionLabels();
@@ -1626,7 +1626,9 @@ function handleSessionEvent(event) {
   }
 
   if (event.type === "interrupted") {
-    state.player?.interrupt();
+    // In consecutive mode the held queue is still valid translation audio;
+    // playback timing is governed by the pause/resume controller.
+    if (!state.player?.consecutive) state.player?.interrupt();
     return;
   }
 
@@ -2044,11 +2046,22 @@ class MicrophoneStreamer {
         // hears that speech back. Detect the user talking OVER it with an
         // adaptive threshold; the consecutive-playback controller pauses
         // playback almost immediately, restoring full-duplex capture.
-        if (!this.wasPlaying) this.echoFloor = rms;
+        if (!this.wasPlaying) {
+          // The speaker output lags dispatch by 100-300ms; start with a
+          // pessimistic floor and give the EMA a warmup window so the TTS's
+          // own onset echo cannot fake a barge-in and pause the playback.
+          this.echoFloor = Math.max(rms, 0.05);
+          this.playStartAt = now;
+        }
         this.wasPlaying = true;
 
+        const inWarmup = now - (this.playStartAt || 0) < 350;
         const threshold = Math.max(MicrophoneStreamer.BARGE_IN_RMS, this.echoFloor * 1.8);
-        this.loudFrames = rms >= threshold ? this.loudFrames + 1 : Math.max(0, this.loudFrames - 1);
+        if (inWarmup) {
+          this.loudFrames = 0;
+        } else {
+          this.loudFrames = rms >= threshold ? this.loudFrames + 1 : Math.max(0, this.loudFrames - 1);
+        }
         if (this.loudFrames >= 2) this.bargeInUntil = now + 900;
 
         if (now > this.bargeInUntil) {
@@ -2207,6 +2220,7 @@ class AudioPlayer {
     this.consecutive = ECHO_GATE_ENABLED;
     this.holdQueue = [];
     this.dispatchOn = false;
+    this.dispatched = [];
   }
 
   // Called ~25x/s from the mic with the timestamp of the user's last speech.
@@ -2226,14 +2240,22 @@ class AudioPlayer {
     if (idleMs > 450) this.dispatchOn = true;
     if (!this.dispatchOn || !this.holdQueue.length) return;
 
-    // Feed the worklet gradually so a pause never discards more than ~400ms.
-    if (this.playbackEndsAt - now < 400) {
+    // Keep a modest amount in flight; anything unplayed at pause time is
+    // re-queued, so the lookahead costs nothing on interruption.
+    if (this.playbackEndsAt - now < 700) {
       const chunk = this.holdQueue.shift();
       this.playThrough(chunk);
     }
   }
 
   pausePlayback() {
+    // Re-queue everything that has not finished sounding yet - pausing must
+    // never eat the tail of a translation.
+    const now = Date.now();
+    const unplayed = this.dispatched.filter((entry) => entry.endAt > now + 60).map((entry) => entry.b64);
+    if (unplayed.length) this.holdQueue.unshift(...unplayed);
+    this.dispatched = [];
+
     this.worklet?.port.postMessage("interrupt");
     for (const source of this.sources) {
       try {
@@ -2300,6 +2322,8 @@ class AudioPlayer {
   playThrough(base64Audio) {
     const durationMs = AudioPlayer.getBase64PcmDurationMs(base64Audio);
     this.playbackEndsAt = Math.max(this.playbackEndsAt, Date.now()) + durationMs;
+    this.dispatched.push({ b64: base64Audio, endAt: this.playbackEndsAt });
+    if (this.dispatched.length > 64) this.dispatched.shift();
     this.playChunk(base64Audio).catch((error) => console.error("playback chunk failed", error));
   }
 
@@ -2389,6 +2413,7 @@ class AudioPlayer {
     this.pendingChunks = [];
     this.holdQueue = [];
     this.dispatchOn = false;
+    this.dispatched = [];
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
