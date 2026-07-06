@@ -1530,6 +1530,19 @@ async function startInterpreter() {
         // actually needed; elsewhere the mic stays full-duplex.
         isPlaybackActive: ECHO_GATE_ENABLED ? () => state.player?.isAudible() === true : null,
         onFrame: ECHO_GATE_ENABLED ? (lastTalkAt) => state.player?.pump(lastTalkAt) : null,
+        onAecVerdict: ECHO_GATE_ENABLED
+          ? (avgRms) => {
+              postMetric("aec_probe", { avgRms: Number(avgRms.toFixed(4)) });
+              diag.log("aec_probe", `avg=${avgRms.toFixed(4)}`);
+              if (avgRms < 0.012) {
+                // The platform cancels our own playback from the mic feed:
+                // no echo path, so no need to hold translations back.
+                state.mic.aecOk = true;
+                state.player?.goStreaming();
+                diag.log("aec_ok stream_on");
+              }
+            }
+          : null,
       },
     );
 
@@ -2051,6 +2064,12 @@ class MicrophoneStreamer {
     this.lastTalkAt = 0;
     this.talkStreak = 0;
     this.onFrame = options.onFrame || null;
+    this.onAecVerdict = options.onAecVerdict || null;
+    this.aecOk = false;
+    this.probeMs = 0;
+    this.probeSum = 0;
+    this.probeFrames = 0;
+    this.probeDone = false;
   }
 
   async start() {
@@ -2092,7 +2111,7 @@ class MicrophoneStreamer {
       if (this.muted) return;
       const samples = MicrophoneStreamer.resampleToMicRate(data, this.inputSampleRate);
       const rms = this.trackVoiceLevel(samples);
-      const playing = this.isPlaybackActive?.() === true;
+      const playing = !this.aecOk && this.isPlaybackActive?.() === true;
       const now = Date.now();
 
       if (playing) {
@@ -2123,6 +2142,18 @@ class MicrophoneStreamer {
           this.setBargeIn(false);
           // Frames treated as echo also teach us how loud the echo is.
           this.echoFloor = this.echoFloor * 0.9 + rms * 0.1;
+          // AEC probe: these frames are what the mic hears of our own TTS.
+          // If the platform's echo cancellation eats it (near-zero rms),
+          // the whole hold-and-gate machinery is unnecessary here.
+          if (!this.probeDone) {
+            this.probeMs += 40;
+            this.probeSum += rms;
+            this.probeFrames += 1;
+            if (this.probeMs >= 2500) {
+              this.probeDone = true;
+              this.onAecVerdict?.(this.probeSum / Math.max(1, this.probeFrames));
+            }
+          }
           this.preRoll.push(samples);
           if (this.preRoll.length > 25) this.preRoll.shift();
           this.gatedMs += (samples.length / MIC_SAMPLE_RATE) * 1000;
@@ -2289,6 +2320,17 @@ class AudioPlayer {
     this.holdQueue = [];
     this.dispatchOn = false;
     this.dispatched = [];
+  }
+
+  // Platform AEC verified working: abandon hold-and-release, stream like
+  // desktop, and immediately drain whatever translation audio is queued.
+  goStreaming() {
+    if (!this.consecutive) return;
+    this.consecutive = false;
+    const queued = this.holdQueue;
+    this.holdQueue = [];
+    this.dispatched = [];
+    for (const chunk of queued) this.play(chunk);
   }
 
   // Called ~25x/s from the mic with the timestamp of the user's last speech.
