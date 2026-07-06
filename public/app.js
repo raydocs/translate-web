@@ -2223,7 +2223,7 @@ class AudioPlayer {
       return;
     }
 
-    if (idleMs > 650) this.dispatchOn = true;
+    if (idleMs > 450) this.dispatchOn = true;
     if (!this.dispatchOn || !this.holdQueue.length) return;
 
     // Feed the worklet gradually so a pause never discards more than ~400ms.
