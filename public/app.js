@@ -217,16 +217,7 @@ const counterpartLanguages = [
   { code: "km", name: "ខ្មែរ" },
 ];
 
-// Languages the model may auto-switch the direction to when it detects them.
-// Deliberately narrower than the selectable list: scripts that are easily
-// confused with Mandarin (vi, th, ...) must never hijack the direction; the
-// user-selected counterpart is always allowed regardless.
-const AUTO_SWITCH_CODES = new Set(["en", "ja", "ko", "es", "fr", "de", "it", "ru", "pt-BR"]);
 
-function canAutoSwitchTo(code) {
-  const normalized = normalizeLanguageCode(code);
-  return AUTO_SWITCH_CODES.has(normalized) || sameTargetLanguage(normalized, state.counterpartLanguage.code);
-}
 
 const majorLanguages = [
   ...counterpartLanguages,
@@ -671,19 +662,16 @@ function updateActiveLanguages(languageCode) {
   const normalized = normalizeLanguageCode(languageCode);
   if (!normalized) return;
 
-  // The model has no source-language pinning and sometimes misdetects
-  // (e.g. Mandarin as Vietnamese). Only the primary language, the selected
-  // counterpart and a curated auto-switch set may steer the direction.
-  if (!sameLanguage(normalized, state.primaryLanguage.code) && !canAutoSwitchTo(normalized)) return;
+  // HARD language pair: the user's selection is the contract. Detection may
+  // only decide WHO is speaking within {primary, selected counterpart};
+  // any other detected language (misdetections included) is ignored and
+  // the current direction stands.
+  const isPrimary = sameLanguage(normalized, state.primaryLanguage.code);
+  const isSelectedCounterpart = sameTargetLanguage(normalized, state.counterpartLanguage.code);
+  if (!isPrimary && !isSelectedCounterpart) return;
 
   const previousTargetCode = state.activeTargetCode;
-  const sourceLanguage = getLanguageForCode(normalized);
   state.activeSourceCode = normalized;
-
-  if (sourceLanguage && !sameLanguage(normalized, state.primaryLanguage.code) && isCounterpartLanguage(sourceLanguage.code)) {
-    setCounterpartLanguage(sourceLanguage.code, { auto: true, keepCaptions: true });
-    warmTargetSession(sourceLanguage);
-  }
 
   const nextTarget = chooseTargetForSource(normalized);
   state.activeTargetCode = nextTarget.code;
