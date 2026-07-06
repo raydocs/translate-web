@@ -1478,7 +1478,7 @@ async function startInterpreter() {
       {
         // Only feed playback state to the gate where echo suppression is
         // actually needed; elsewhere the mic stays full-duplex.
-        isPlaybackActive: ECHO_GATE_ENABLED ? () => state.player?.isPlaying() === true : null,
+        isPlaybackActive: ECHO_GATE_ENABLED ? () => state.player?.isAudible() === true : null,
         onFrame: ECHO_GATE_ENABLED ? (lastTalkAt) => state.player?.pump(lastTalkAt) : null,
       },
     );
@@ -1996,6 +1996,7 @@ class MicrophoneStreamer {
     this.echoFloor = 0;
     this.wasPlaying = false;
     this.lastTalkAt = 0;
+    this.talkStreak = 0;
     this.onFrame = options.onFrame || null;
   }
 
@@ -2054,6 +2055,7 @@ class MicrophoneStreamer {
           this.playStartAt = now;
         }
         this.wasPlaying = true;
+        this.talkStreak = 0;
 
         const inWarmup = now - (this.playStartAt || 0) < 350;
         const threshold = Math.max(MicrophoneStreamer.BARGE_IN_RMS, this.echoFloor * 1.8);
@@ -2088,7 +2090,15 @@ class MicrophoneStreamer {
         this.bargeInUntil = 0;
         this.preRoll = [];
         this.setBargeIn(false);
-        if (rms > 0.02) this.lastTalkAt = now;
+        // "User is talking" needs two consecutive speech-level frames -
+        // AGC-amplified room noise hovering near the floor must not stall
+        // the held-playback dispatcher.
+        if (rms > (this.talkStreak > 0 ? 0.018 : 0.028)) {
+          this.talkStreak += 1;
+          if (this.talkStreak >= 2) this.lastTalkAt = now;
+        } else {
+          this.talkStreak = 0;
+        }
       }
 
       this.emitFrame(samples);
@@ -2271,6 +2281,13 @@ class AudioPlayer {
 
   isPlaying() {
     return Date.now() < this.playbackEndsAt;
+  }
+
+  // The speaker keeps sounding ~300ms past our bookkeeping (decode + worklet
+  // + output latency); treat that tail as "audible" so the mic gate does not
+  // mistake our own fading TTS for the user talking.
+  isAudible() {
+    return this.playbackEndsAt > 0 && Date.now() < this.playbackEndsAt + 350;
   }
 
   duck(active) {
