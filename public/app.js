@@ -120,6 +120,10 @@ const elements = {
   chooseConversation: document.querySelector("#chooseConversation"),
   chooseText: document.querySelector("#chooseText"),
   flipBtn: document.querySelector("#flipBtn"),
+  langPicker: document.querySelector("#langPicker"),
+  langPickerTitle: document.querySelector("#langPickerTitle"),
+  langPickerList: document.querySelector("#langPickerList"),
+  langPickerClose: document.querySelector("#langPickerClose"),
   historyBtn: document.querySelector("#historyBtn"),
   historyPanel: document.querySelector("#historyPanel"),
   historyCloseBtn: document.querySelector("#historyCloseBtn"),
@@ -185,37 +189,45 @@ const chineseScriptOptions = [
 ];
 
 const counterpartLanguages = [
-  { code: "en", name: "English" },
-  { code: "ja", name: "日本語" },
-  { code: "ko", name: "한국어" },
-  { code: "es", name: "Español" },
-  { code: "fr", name: "Français" },
-  { code: "de", name: "Deutsch" },
-  { code: "it", name: "Italiano" },
-  { code: "pt-BR", name: "Português" },
-  { code: "ru", name: "Русский" },
-  { code: "ar", name: "العربية" },
-  { code: "hi", name: "हिन्दी" },
-  { code: "th", name: "ไทย" },
-  { code: "vi", name: "Tiếng Việt" },
-  { code: "id", name: "Bahasa Indonesia" },
-  { code: "ms", name: "Bahasa Melayu" },
-  { code: "tr", name: "Türkçe" },
-  { code: "nl", name: "Nederlands" },
-  { code: "pl", name: "Polski" },
-  { code: "sv", name: "Svenska" },
-  { code: "uk", name: "Українська" },
-  { code: "el", name: "Ελληνικά" },
-  { code: "cs", name: "Čeština" },
-  { code: "ro", name: "Română" },
-  { code: "hu", name: "Magyar" },
-  { code: "da", name: "Dansk" },
-  { code: "fi", name: "Suomi" },
-  { code: "no", name: "Norsk" },
-  { code: "he", name: "עברית" },
-  { code: "fil", name: "Filipino" },
-  { code: "km", name: "ខ្មែរ" },
+  { code: "en", name: "English", zh: "英语" },
+  { code: "ja", name: "日本語", zh: "日语" },
+  { code: "ko", name: "한국어", zh: "韩语" },
+  { code: "es", name: "Español", zh: "西班牙语" },
+  { code: "fr", name: "Français", zh: "法语" },
+  { code: "de", name: "Deutsch", zh: "德语" },
+  { code: "it", name: "Italiano", zh: "意大利语" },
+  { code: "pt-BR", name: "Português", zh: "葡萄牙语" },
+  { code: "ru", name: "Русский", zh: "俄语" },
+  { code: "ar", name: "العربية", zh: "阿拉伯语" },
+  { code: "hi", name: "हिन्दी", zh: "印地语" },
+  { code: "th", name: "ไทย", zh: "泰语" },
+  { code: "vi", name: "Tiếng Việt", zh: "越南语" },
+  { code: "id", name: "Bahasa Indonesia", zh: "印尼语" },
+  { code: "ms", name: "Bahasa Melayu", zh: "马来语" },
+  { code: "tr", name: "Türkçe", zh: "土耳其语" },
+  { code: "nl", name: "Nederlands", zh: "荷兰语" },
+  { code: "pl", name: "Polski", zh: "波兰语" },
+  { code: "sv", name: "Svenska", zh: "瑞典语" },
+  { code: "uk", name: "Українська", zh: "乌克兰语" },
+  { code: "el", name: "Ελληνικά", zh: "希腊语" },
+  { code: "cs", name: "Čeština", zh: "捷克语" },
+  { code: "ro", name: "Română", zh: "罗马尼亚语" },
+  { code: "hu", name: "Magyar", zh: "匈牙利语" },
+  { code: "da", name: "Dansk", zh: "丹麦语" },
+  { code: "fi", name: "Suomi", zh: "芬兰语" },
+  { code: "no", name: "Norsk", zh: "挪威语" },
+  { code: "he", name: "עברית", zh: "希伯来语" },
+  { code: "fil", name: "Filipino", zh: "菲律宾语" },
+  { code: "km", name: "ខ្មែរ", zh: "高棉语" },
 ];
+
+// User-facing display name: Chinese primary, native as fallback.
+function displayLanguageName(code) {
+  const normalized = normalizeLanguageCode(code);
+  const match = [...chineseScriptOptions, ...counterpartLanguages].find((item) => sameTargetLanguage(item.code, normalized));
+  if (match) return match.zh || match.name;
+  return getLanguageName(code);
+}
 
 
 
@@ -645,9 +657,9 @@ function chooseTargetForSource(sourceCode) {
 }
 
 function updateCaptionLabels() {
-  const sourceName = state.activeSourceCode ? getLanguageName(state.activeSourceCode) : "Auto";
+  const sourceName = state.activeSourceCode ? displayLanguageName(state.activeSourceCode) : "自动";
   elements.sourceLabel.textContent = `说的 · ${sourceName}`;
-  elements.translationLabel.textContent = `翻译 · ${getLanguageName(state.activeTargetCode)}`;
+  elements.translationLabel.textContent = `翻译 · ${displayLanguageName(state.activeTargetCode)}`;
   updateLanguageBar();
 }
 
@@ -1149,8 +1161,8 @@ function renderLanguagePair() {
 }
 
 function updateLanguageBar() {
-  elements.sourceLanguageBtn.value = state.primaryLanguage.code;
-  elements.targetLanguageBtn.value = state.counterpartLanguage.code;
+  elements.sourceLanguageBtn.textContent = displayLanguageName(state.primaryLanguage.code);
+  elements.targetLanguageBtn.textContent = displayLanguageName(state.counterpartLanguage.code);
 }
 
 
@@ -3082,8 +3094,45 @@ for (const button of document.querySelectorAll("[data-example]")) {
 elements.resolveBtn.addEventListener("click", resolveLanguages);
 elements.voiceSetupBtn.addEventListener("click", startSetupSpeechRecognition);
 elements.startBtn.addEventListener("click", startInterpreter);
-elements.sourceLanguageBtn.addEventListener("change", () => setPrimaryLanguage(elements.sourceLanguageBtn.value));
-elements.targetLanguageBtn.addEventListener("change", () => setCounterpartLanguage(elements.targetLanguageBtn.value));
+// ---- Custom language picker (native <select> broke the design system) ----
+let langPickerMode = "target";
+
+function openLangPicker(mode) {
+  langPickerMode = mode;
+  const isSource = mode === "source";
+  elements.langPickerTitle.textContent = isSource ? "中文显示 · CHINESE SCRIPT" : "对方语言 · TARGET LANGUAGE";
+  const items = isSource ? chineseScriptOptions : counterpartLanguages;
+  const currentCode = isSource ? state.primaryLanguage.code : state.counterpartLanguage.code;
+
+  elements.langPickerList.replaceChildren(
+    ...items.map((language) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "lang-row";
+      if (sameTargetLanguage(language.code, currentCode)) row.classList.add("active");
+      const zh = document.createElement("strong");
+      zh.textContent = language.zh || language.name;
+      const native = document.createElement("span");
+      native.textContent = language.zh ? language.name : "";
+      row.append(zh, native);
+      row.addEventListener("click", () => {
+        if (isSource) setPrimaryLanguage(language.code);
+        else setCounterpartLanguage(language.code);
+        closeLangPicker();
+      });
+      return row;
+    }),
+  );
+  elements.langPicker.hidden = false;
+}
+
+function closeLangPicker() {
+  elements.langPicker.hidden = true;
+}
+
+elements.sourceLanguageBtn.addEventListener("click", () => openLangPicker("source"));
+elements.targetLanguageBtn.addEventListener("click", () => openLangPicker("target"));
+elements.langPickerClose.addEventListener("click", closeLangPicker);
 elements.swapBtn.addEventListener("click", swapPrimaryLanguages);
 elements.muteBtn.addEventListener("click", toggleMute);
 elements.clearBtn.addEventListener("click", clearCaptions);
@@ -3115,16 +3164,6 @@ window.addEventListener("beforeunload", () => {
   stopInterpreter({ keepStatus: true, beacon: true });
   flushSessionToHistory();
 });
-
-// Build the counterpart selector from the full language list.
-elements.targetLanguageBtn.replaceChildren(
-  ...counterpartLanguages.map((language) => {
-    const option = document.createElement("option");
-    option.value = language.code;
-    option.textContent = language.name;
-    return option;
-  }),
-);
 
 const buildTag = document.querySelector("#buildTag");
 if (buildTag) buildTag.textContent = APP_BUILD;

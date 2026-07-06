@@ -6,25 +6,16 @@
     <meta name="theme-color" content="#ffffff" />
     <title>Live Translate</title>
     <meta name="description" content="Gemini 3.5 Live Translate 实时语音翻译。" />
-    <link rel="stylesheet" href="/styles.css?v=20260707-hardpair1" />
+    <link rel="stylesheet" href="/styles.css?v=20260707-langpicker1" />
   </head>
   <body>
     <main class="translate-app">
       <section class="translate-surface" aria-label="Live translation">
         <header class="language-bar">
           <button id="historyBtn" class="nav-button history-button" type="button" aria-label="会话记录">≡</button>
-          <select id="sourceLanguageBtn" class="language-select" aria-label="中文显示">
-            <option value="zh-Hans">简体中文</option>
-            <option value="zh-Hant">繁體中文</option>
-          </select>
+          <button id="sourceLanguageBtn" class="language-select" type="button" aria-label="中文显示">简体中文</button>
           <button id="swapBtn" class="swap-button" type="button" aria-label="重置识别方向">↔</button>
-          <select id="targetLanguageBtn" class="language-select target" aria-label="对方语言">
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-          </select>
+          <button id="targetLanguageBtn" class="language-select target" type="button" aria-label="对方语言">英语</button>
           <p id="connectionStatus" class="menu-button status-pill muted" aria-live="polite">•••</p>
         </header>
 
@@ -85,6 +76,15 @@
           <button id="typeSendBtn" type="submit" aria-label="翻译">→</button>
         </form>
       </footer>
+
+      <section id="langPicker" class="history-panel lang-picker" hidden>
+        <header class="history-head">
+          <button id="langPickerClose" class="nav-button" type="button" aria-label="关闭">‹</button>
+          <p id="langPickerTitle" class="history-title">对方语言 · TARGET LANGUAGE</p>
+          <span class="history-head-spacer"></span>
+        </header>
+        <div id="langPickerList" class="lang-list"></div>
+      </section>
 
       <section id="historyPanel" class="history-panel" hidden>
         <header class="history-head">
@@ -152,6 +152,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=20260707-hardpair1" type="module"></script>
+    <script src="/app.js?v=20260707-langpicker1" type="module"></script>
   </body>
 </html>

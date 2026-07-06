@@ -204,6 +204,54 @@ body.choose-mode .bottom-console {
   visibility: hidden;
 }
 
+.lang-picker {
+  z-index: 34;
+}
+
+.lang-list {
+  overflow-y: auto;
+  padding: 4px var(--page-x) 48px;
+  display: grid;
+  align-content: start;
+}
+
+.lang-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 15px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+}
+
+.lang-row:active {
+  background: rgba(22, 24, 28, 0.04);
+}
+
+.lang-row strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lang-row span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.lang-row.active strong {
+  color: var(--accent);
+}
+
+.lang-row.active span::after {
+  content: " ·";
+  color: var(--accent);
+}
+
 .history-button {
   font-size: 1.7rem;
   font-weight: 400;
