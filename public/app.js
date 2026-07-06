@@ -1479,7 +1479,7 @@ async function startInterpreter() {
         // Only feed playback state to the gate where echo suppression is
         // actually needed; elsewhere the mic stays full-duplex.
         isPlaybackActive: ECHO_GATE_ENABLED ? () => state.player?.isPlaying() === true : null,
-        onBargeIn: ECHO_GATE_ENABLED ? (active) => state.player?.duck(active) : null,
+        onFrame: ECHO_GATE_ENABLED ? (lastTalkAt) => state.player?.pump(lastTalkAt) : null,
       },
     );
 
@@ -1966,9 +1966,10 @@ class GeminiTranslateSession {
 }
 
 class MicrophoneStreamer {
-  // RMS a captured frame must reach, while translated audio is playing, to
-  // count as the user talking over the playback rather than speaker echo.
-  static BARGE_IN_RMS = 0.04;
+  // Base RMS a captured frame must reach, while translated audio is playing,
+  // to count as the user talking over the playback rather than speaker echo.
+  // The effective threshold adapts upward when the measured echo is loud.
+  static BARGE_IN_RMS = 0.03;
 
   constructor(onAudio, onNoiseState, options = {}) {
     this.onAudio = onAudio;
@@ -1990,6 +1991,10 @@ class MicrophoneStreamer {
     this.bargeInUntil = 0;
     this.bargeInActive = false;
     this.gatedMs = 0;
+    this.echoFloor = 0;
+    this.wasPlaying = false;
+    this.lastTalkAt = 0;
+    this.onFrame = options.onFrame || null;
   }
 
   async start() {
@@ -2035,35 +2040,46 @@ class MicrophoneStreamer {
       const now = Date.now();
 
       if (playing) {
-        // iOS Safari's echo cancellation does not cover Web Audio playback,
-        // so while translated speech is on the speaker the mic mostly hears
-        // that speech back. Unless the user is clearly talking over it
-        // (barge-in), hold frames back to break the self-translation loop.
-        this.loudFrames = rms >= MicrophoneStreamer.BARGE_IN_RMS ? this.loudFrames + 1 : Math.max(0, this.loudFrames - 1);
-        if (this.loudFrames >= 3) this.bargeInUntil = now + 900;
+        // TTS is on the speaker and (in gated environments) the mic mostly
+        // hears that speech back. Detect the user talking OVER it with an
+        // adaptive threshold; the consecutive-playback controller pauses
+        // playback almost immediately, restoring full-duplex capture.
+        if (!this.wasPlaying) this.echoFloor = rms;
+        this.wasPlaying = true;
+
+        const threshold = Math.max(MicrophoneStreamer.BARGE_IN_RMS, this.echoFloor * 1.8);
+        this.loudFrames = rms >= threshold ? this.loudFrames + 1 : Math.max(0, this.loudFrames - 1);
+        if (this.loudFrames >= 2) this.bargeInUntil = now + 900;
 
         if (now > this.bargeInUntil) {
           this.setBargeIn(false);
+          // Frames treated as echo also teach us how loud the echo is.
+          this.echoFloor = this.echoFloor * 0.9 + rms * 0.1;
           this.preRoll.push(samples);
-          if (this.preRoll.length > 12) this.preRoll.shift();
+          if (this.preRoll.length > 25) this.preRoll.shift();
           this.gatedMs += (samples.length / MIC_SAMPLE_RATE) * 1000;
+          this.onFrame?.(this.lastTalkAt);
           return;
         }
 
         this.setBargeIn(true);
+        this.lastTalkAt = now;
         if (this.preRoll.length) {
           const buffered = this.preRoll;
           this.preRoll = [];
           for (const chunk of buffered) this.emitFrame(chunk);
         }
       } else {
+        this.wasPlaying = false;
         this.loudFrames = 0;
         this.bargeInUntil = 0;
         this.preRoll = [];
         this.setBargeIn(false);
+        if (rms > 0.02) this.lastTalkAt = now;
       }
 
       this.emitFrame(samples);
+      this.onFrame?.(this.lastTalkAt);
     };
 
     this.source.connect(this.highpass);
@@ -2184,6 +2200,51 @@ class AudioPlayer {
     this.ducked = false;
     this.pendingChunks = [];
     this.flushTimer = null;
+    // Consecutive-interpretation mode (speakerphone environments): hold TTS
+    // in a queue while the user is talking, speak during their pauses, and
+    // pause again the moment they resume. Full-duplex capture, no swallowed
+    // speech, no echo loop.
+    this.consecutive = ECHO_GATE_ENABLED;
+    this.holdQueue = [];
+    this.dispatchOn = false;
+  }
+
+  // Called ~25x/s from the mic with the timestamp of the user's last speech.
+  pump(lastTalkAt) {
+    if (!this.consecutive) return;
+    const now = Date.now();
+    const idleMs = now - (lastTalkAt || 0);
+
+    if (idleMs < 250) {
+      // User is talking: pause playback (droppable worklet buffer is small);
+      // the held queue survives and resumes later.
+      if (this.isPlaying()) this.pausePlayback();
+      this.dispatchOn = false;
+      return;
+    }
+
+    if (idleMs > 650) this.dispatchOn = true;
+    if (!this.dispatchOn || !this.holdQueue.length) return;
+
+    // Feed the worklet gradually so a pause never discards more than ~400ms.
+    if (this.playbackEndsAt - now < 400) {
+      const chunk = this.holdQueue.shift();
+      this.playThrough(chunk);
+    }
+  }
+
+  pausePlayback() {
+    this.worklet?.port.postMessage("interrupt");
+    for (const source of this.sources) {
+      try {
+        source.stop();
+      } catch {
+        // Already stopped.
+      }
+    }
+    this.sources.clear();
+    this.fallbackPlayTime = this.context?.currentTime || 0;
+    this.playbackEndsAt = 0;
   }
 
   isPlaying() {
@@ -2218,6 +2279,11 @@ class AudioPlayer {
   }
 
   play(base64Audio) {
+    if (this.consecutive) {
+      this.holdQueue.push(base64Audio);
+      if (this.holdQueue.length > 400) this.holdQueue.shift();
+      return;
+    }
     const durationMs = AudioPlayer.getBase64PcmDurationMs(base64Audio);
     const startingFresh = !this.isPlaying() && !this.flushTimer;
     this.playbackEndsAt = Math.max(this.playbackEndsAt, Date.now()) + durationMs;
@@ -2229,6 +2295,12 @@ class AudioPlayer {
       this.flushTimer = null;
       this.flushPending();
     }, startingFresh ? 140 : 0);
+  }
+
+  playThrough(base64Audio) {
+    const durationMs = AudioPlayer.getBase64PcmDurationMs(base64Audio);
+    this.playbackEndsAt = Math.max(this.playbackEndsAt, Date.now()) + durationMs;
+    this.playChunk(base64Audio).catch((error) => console.error("playback chunk failed", error));
   }
 
   async flushPending() {
@@ -2315,6 +2387,8 @@ class AudioPlayer {
     this.fallbackPlayTime = this.context?.currentTime || 0;
     this.playbackEndsAt = 0;
     this.pendingChunks = [];
+    this.holdQueue = [];
+    this.dispatchOn = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
