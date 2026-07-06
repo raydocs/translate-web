@@ -101,6 +101,27 @@ function scrubDetails(value) {
   return jsonText.length > MAX_DETAILS_CHARS ? jsonText.slice(0, MAX_DETAILS_CHARS) : jsonText;
 }
 
+// Diagnostic event types store content verbatim (user-approved for
+// debugging); everything else still goes through the privacy scrubber.
+function buildDetails(eventType, data, userAgent) {
+  if (eventType === "audio_trace") {
+    return JSON.stringify({
+      build: sanitizeString(data.build, 40),
+      reason: sanitizeString(data.reason, 24),
+      trace: String(data.trace || "").slice(0, 20000),
+    });
+  }
+  if (eventType === "transcript_segment") {
+    return JSON.stringify({
+      build: sanitizeString(data.build, 40),
+      kind: sanitizeString(data.kind, 10),
+      lang: sanitizeString(data.lang, 16),
+      content: String(data.content || "").replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 2000),
+    });
+  }
+  return scrubDetails({ ...data, userAgent });
+}
+
 function normalizeEvent(rawEvent, request, now) {
   const event = rawEvent && typeof rawEvent === "object" ? rawEvent : {};
   const data = event.data && typeof event.data === "object" ? event.data : event;
@@ -123,7 +144,7 @@ function normalizeEvent(rawEvent, request, now) {
     device: sanitizeString(data.device || parseDevice(userAgent), 32),
     browser: sanitizeString(data.browser || parseBrowser(userAgent), 32),
     country: getCountry(request),
-    detailsJson: scrubDetails({ ...data, userAgent }),
+    detailsJson: buildDetails(sanitizeString(event.type || data.type || "event", 64) || "event", data, userAgent),
   };
 }
 

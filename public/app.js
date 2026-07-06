@@ -15,6 +15,55 @@ const IS_IOS =
 const IS_INAPP_WEBVIEW = /MicroMessenger|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent || "");
 const ECHO_GATE_ENABLED = IS_IOS || IS_INAPP_WEBVIEW;
 
+const APP_BUILD = ((document.querySelector('script[src*="app.js"]') || {}).src || "").split("v=")[1] || "dev";
+
+// Rolling client-side diagnostic trace, flushed to the backend every 15s
+// while running and on notable events. Compact one-line entries with
+// ms-precision timestamps let a whole playback incident be reconstructed.
+const diag = {
+  lines: [],
+  lastFlushAt: 0,
+  sec: { sum: 0, max: 0, frames: 0, gatedMs: 0, boundary: 0, arrivals: 0 },
+  log(tag, extra = "") {
+    const stamp = new Date().toISOString().slice(14, 23);
+    this.lines.push(extra ? `${stamp} ${tag} ${extra}` : `${stamp} ${tag}`);
+    if (this.lines.length > 400) this.lines.splice(0, this.lines.length - 400);
+  },
+  frame(rms, gated, playing) {
+    const now = Date.now();
+    const sec = this.sec;
+    sec.sum += rms;
+    sec.max = Math.max(sec.max, rms);
+    sec.frames += 1;
+    if (gated) sec.gatedMs += 40;
+    if (!sec.boundary) sec.boundary = now;
+    if (now - sec.boundary >= 1000) {
+      const q = state.player?.holdQueue?.length ?? 0;
+      const talkAgo = now - (state.mic?.lastTalkAt || 0);
+      this.log(
+        "s",
+        `rms=${(sec.sum / Math.max(1, sec.frames)).toFixed(3)}/${sec.max.toFixed(3)} gated=${sec.gatedMs} q=${q} arr=${sec.arrivals} p=${playing ? 1 : 0} talk=${Math.min(talkAgo, 99999)}`,
+      );
+      sec.sum = 0;
+      sec.max = 0;
+      sec.frames = 0;
+      sec.gatedMs = 0;
+      sec.arrivals = 0;
+      sec.boundary = now;
+    }
+    if (now - this.lastFlushAt > 15000) {
+      this.lastFlushAt = now;
+      this.flush("periodic");
+    }
+  },
+  flush(reason) {
+    if (!this.lines.length) return;
+    const trace = this.lines.join("\n");
+    this.lines = [];
+    postMetric("audio_trace", { build: APP_BUILD, reason, trace });
+  },
+};
+
 function getLiveSocketUrl(targetLanguageCode) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL("/api/live", `${protocol}//${window.location.host}`);
@@ -778,6 +827,7 @@ function postMetric(type, data = {}, options = {}) {
     sessionId: metrics.sessionId,
     data: {
       model: LIVE_MODEL,
+      build: APP_BUILD,
       pageSessionId: metrics.pageSessionId,
       device: getMetricDevice(),
       browser: getMetricBrowser(),
@@ -1498,6 +1548,7 @@ async function startInterpreter() {
 
     state.running = true;
     state.muted = false;
+    diag.log("start", `build=${APP_BUILD} gate=${ECHO_GATE_ENABLED ? 1 : 0}`);
     acquireWakeLock();
     document.body.classList.add("running");
     elements.startBtn.textContent = "停止";
@@ -1540,6 +1591,8 @@ function stopInterpreter(options = {}) {
   state.sessionNonce += 1;
   reconnectHistory.clear();
   pendingReconnects.clear();
+  diag.log("stop");
+  diag.flush("stop");
   flushSessionToHistory();
   releaseWakeLock();
   state.mic?.stop();
@@ -2074,9 +2127,13 @@ class MicrophoneStreamer {
           if (this.preRoll.length > 25) this.preRoll.shift();
           this.gatedMs += (samples.length / MIC_SAMPLE_RATE) * 1000;
           this.onFrame?.(this.lastTalkAt);
+          diag.frame(rms, true, true);
           return;
         }
 
+        if (!this.bargeInActive) {
+          diag.log("bargein", `rms=${rms.toFixed(3)} thr=${Math.max(MicrophoneStreamer.BARGE_IN_RMS, this.echoFloor * 1.8).toFixed(3)} floor=${this.echoFloor.toFixed(3)}`);
+        }
         this.setBargeIn(true);
         this.lastTalkAt = now;
         if (this.preRoll.length) {
@@ -2103,6 +2160,7 @@ class MicrophoneStreamer {
 
       this.emitFrame(samples);
       this.onFrame?.(this.lastTalkAt);
+      diag.frame(rms, false, playing);
     };
 
     this.source.connect(this.highpass);
@@ -2243,10 +2301,14 @@ class AudioPlayer {
       // User is talking: pause playback (droppable worklet buffer is small);
       // the held queue survives and resumes later.
       if (this.isPlaying()) this.pausePlayback();
+      if (this.dispatchOn) diag.log("dispatch_off", `q=${this.holdQueue.length}`);
       this.dispatchOn = false;
       return;
     }
 
+    if (idleMs > 450 && !this.dispatchOn && this.holdQueue.length) {
+      diag.log("dispatch_on", `q=${this.holdQueue.length} idle=${Math.round(idleMs)}`);
+    }
     if (idleMs > 450) this.dispatchOn = true;
     if (!this.dispatchOn || !this.holdQueue.length) return;
 
@@ -2265,6 +2327,8 @@ class AudioPlayer {
     const now = Date.now();
     const unplayed = this.dispatched.filter((entry) => entry.endAt > now - 150).map((entry) => entry.b64);
     if (unplayed.length) this.holdQueue.unshift(...unplayed);
+    diag.log("pause", `requeued=${unplayed.length} q=${this.holdQueue.length} endsIn=${Math.round(this.playbackEndsAt - now)}`);
+    diag.flush("pause");
     postMetric("tts_pause", { requeued: unplayed.length, queued: this.holdQueue.length });
     this.dispatched = [];
 
@@ -2322,6 +2386,7 @@ class AudioPlayer {
   play(base64Audio) {
     if (this.consecutive) {
       this.holdQueue.push(base64Audio);
+      diag.sec.arrivals += 1;
       if (this.holdQueue.length > 400) this.holdQueue.shift();
       return;
     }
@@ -2560,6 +2625,9 @@ function logSessionEntry(kind, text, lang) {
   if (!sessionLog.startedAt) sessionLog.startedAt = Date.now();
   sessionLog.entries.push({ k: kind === "output" ? "o" : "s", t: value, l: lang || "", at: Date.now() });
   if (sessionLog.entries.length > 500) sessionLog.entries.splice(0, sessionLog.entries.length - 500);
+  // Cloud copy for debugging (user-approved): lets transcripts be lined up
+  // against the audio trace when diagnosing swallowed words.
+  postMetric("transcript_segment", { build: APP_BUILD, kind, lang: lang || "", content: value });
 }
 
 function readHistory() {
