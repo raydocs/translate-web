@@ -66,6 +66,29 @@ const elements = {
   modeChooser: document.querySelector("#modeChooser"),
   chooseConversation: document.querySelector("#chooseConversation"),
   chooseText: document.querySelector("#chooseText"),
+  flipBtn: document.querySelector("#flipBtn"),
+  historyBtn: document.querySelector("#historyBtn"),
+  historyPanel: document.querySelector("#historyPanel"),
+  historyCloseBtn: document.querySelector("#historyCloseBtn"),
+  historyTitle: document.querySelector("#historyTitle"),
+  historyList: document.querySelector("#historyList"),
+  historyDetail: document.querySelector("#historyDetail"),
+  historyEntries: document.querySelector("#historyEntries"),
+  historyCopyBtn: document.querySelector("#historyCopyBtn"),
+  historyShareBtn: document.querySelector("#historyShareBtn"),
+  historyDownloadBtn: document.querySelector("#historyDownloadBtn"),
+  historyDeleteBtn: document.querySelector("#historyDeleteBtn"),
+  photoBtn: document.querySelector("#photoBtn"),
+  photoInput: document.querySelector("#photoInput"),
+  transSheet: document.querySelector("#transSheet"),
+  transSheetText: document.querySelector("#transSheetText"),
+  transSheetBack: document.querySelector("#transSheetBack"),
+  transSheetClose: document.querySelector("#transSheetClose"),
+  transSheetReplay: document.querySelector("#transSheetReplay"),
+  transSheetBackBtn: document.querySelector("#transSheetBackBtn"),
+  typeConsole: document.querySelector("#typeConsole"),
+  typeInput: document.querySelector("#typeInput"),
+  typeSendBtn: document.querySelector("#typeSendBtn"),
   editSheet: document.querySelector("#editSheet"),
   editSheetInput: document.querySelector("#editSheetInput"),
   editSheetCancel: document.querySelector("#editSheetCancel"),
@@ -114,7 +137,43 @@ const counterpartLanguages = [
   { code: "ko", name: "한국어" },
   { code: "es", name: "Español" },
   { code: "fr", name: "Français" },
+  { code: "de", name: "Deutsch" },
+  { code: "it", name: "Italiano" },
+  { code: "pt-BR", name: "Português" },
+  { code: "ru", name: "Русский" },
+  { code: "ar", name: "العربية" },
+  { code: "hi", name: "हिन्दी" },
+  { code: "th", name: "ไทย" },
+  { code: "vi", name: "Tiếng Việt" },
+  { code: "id", name: "Bahasa Indonesia" },
+  { code: "ms", name: "Bahasa Melayu" },
+  { code: "tr", name: "Türkçe" },
+  { code: "nl", name: "Nederlands" },
+  { code: "pl", name: "Polski" },
+  { code: "sv", name: "Svenska" },
+  { code: "uk", name: "Українська" },
+  { code: "el", name: "Ελληνικά" },
+  { code: "cs", name: "Čeština" },
+  { code: "ro", name: "Română" },
+  { code: "hu", name: "Magyar" },
+  { code: "da", name: "Dansk" },
+  { code: "fi", name: "Suomi" },
+  { code: "no", name: "Norsk" },
+  { code: "he", name: "עברית" },
+  { code: "fil", name: "Filipino" },
+  { code: "km", name: "ខ្មែរ" },
 ];
+
+// Languages the model may auto-switch the direction to when it detects them.
+// Deliberately narrower than the selectable list: scripts that are easily
+// confused with Mandarin (vi, th, ...) must never hijack the direction; the
+// user-selected counterpart is always allowed regardless.
+const AUTO_SWITCH_CODES = new Set(["en", "ja", "ko", "es", "fr", "de", "it", "ru", "pt-BR"]);
+
+function canAutoSwitchTo(code) {
+  const normalized = normalizeLanguageCode(code);
+  return AUTO_SWITCH_CODES.has(normalized) || sameTargetLanguage(normalized, state.counterpartLanguage.code);
+}
 
 const majorLanguages = [
   ...counterpartLanguages,
@@ -518,7 +577,10 @@ function normalizeExistingChineseCaptions() {
     const languageCode = kind === "output" ? state.activeTargetCode : state.activeSourceCode;
     if (!sameLanguage(languageCode, "zh")) continue;
     const bucket = state.captions[kind];
-    bucket.segments = bucket.segments.map((segment) => convertChineseScript(segment, state.primaryLanguage.code));
+    bucket.segments = bucket.segments.map((segment) => ({
+      ...segment,
+      text: convertChineseScript(segment.text, state.primaryLanguage.code),
+    }));
     bucket.current = convertChineseScript(bucket.current, state.primaryLanguage.code);
     bucket.lastIncoming = convertChineseScript(bucket.lastIncoming, state.primaryLanguage.code);
   }
@@ -557,10 +619,9 @@ function updateActiveLanguages(languageCode) {
   if (!normalized) return;
 
   // The model has no source-language pinning and sometimes misdetects
-  // (e.g. Mandarin as Vietnamese). Only the primary language and the
-  // supported counterpart languages may steer the translation direction;
-  // anything outside that list is ignored.
-  if (!sameLanguage(normalized, state.primaryLanguage.code) && !isCounterpartLanguage(normalized)) return;
+  // (e.g. Mandarin as Vietnamese). Only the primary language, the selected
+  // counterpart and a curated auto-switch set may steer the direction.
+  if (!sameLanguage(normalized, state.primaryLanguage.code) && !canAutoSwitchTo(normalized)) return;
 
   const previousTargetCode = state.activeTargetCode;
   const sourceLanguage = getLanguageForCode(normalized);
@@ -605,8 +666,8 @@ const state = {
   mode: "conversation",
   setupRecognition: null,
   captions: {
-    source: { segments: [], current: "", lastIncoming: "", updatedAt: 0 },
-    output: { segments: [], current: "", lastIncoming: "", updatedAt: 0 },
+    source: { segments: [], current: "", currentLang: "", lastIncoming: "", updatedAt: 0 },
+    output: { segments: [], current: "", currentLang: "", lastIncoming: "", updatedAt: 0 },
   },
   transcript: new Map(),
 };
@@ -897,7 +958,7 @@ function scrollToLatest() {
 }
 
 function resetCaptionBucket(kind) {
-  state.captions[kind] = { segments: [], current: "", lastIncoming: "", updatedAt: 0 };
+  state.captions[kind] = { segments: [], current: "", currentLang: "", lastIncoming: "", updatedAt: 0 };
 }
 
 function splitCompleteSegments(text, force = false) {
@@ -935,15 +996,21 @@ function splitCompleteSegments(text, force = false) {
   return { segments, rest };
 }
 
+function captionLanguage(kind) {
+  return normalizeLanguageCode(kind === "output" ? state.activeTargetCode : state.activeSourceCode) || "";
+}
+
 function appendCaptionSegment(kind, text, finished = false) {
   const bucket = state.captions[kind];
   const now = Date.now();
+  const lang = captionLanguage(kind);
   const incoming = String(text || "");
   const wasPaused = bucket.updatedAt && now - bucket.updatedAt > 1400;
 
   if (wasPaused && bucket.current.trim()) {
     const flushed = splitCompleteSegments(bucket.current, true);
-    bucket.segments.push(...flushed.segments);
+    bucket.segments.push(...flushed.segments.map((value) => ({ text: value, lang: bucket.currentLang || lang })));
+    for (const value of flushed.segments) logSessionEntry(kind, value, bucket.currentLang || lang);
     bucket.current = "";
     bucket.lastIncoming = "";
   }
@@ -957,33 +1024,67 @@ function appendCaptionSegment(kind, text, finished = false) {
 
   bucket.lastIncoming = finished ? "" : incoming;
   bucket.current = `${bucket.current}${delta}`;
+  bucket.currentLang = lang;
   const { segments, rest } = splitCompleteSegments(bucket.current, finished);
 
-  bucket.segments.push(...segments);
+  bucket.segments.push(...segments.map((value) => ({ text: value, lang })));
+  for (const value of segments) logSessionEntry(kind, value, lang);
   bucket.current = rest;
   bucket.updatedAt = now;
   if (bucket.segments.length > 120) bucket.segments.splice(0, bucket.segments.length - 120);
 }
 
 function renderCaption(element, bucket, emptyText, options = {}) {
-  const values = [...bucket.segments, bucket.current.trim()].filter(Boolean);
-  element.replaceChildren();
-  element.classList.toggle("empty", values.length === 0);
+  const items = bucket.segments.map((segment) => ({ text: segment.text, lang: segment.lang, done: true }));
+  const tail = bucket.current.trim();
+  if (tail) items.push({ text: tail, lang: bucket.currentLang || "", done: false });
 
-  if (!values.length) {
+  element.replaceChildren();
+  element.classList.toggle("empty", items.length === 0);
+
+  if (!items.length) {
     element.textContent = emptyText;
     return;
   }
 
-  const segmentCount = bucket.segments.length;
-  values.forEach((value, index) => {
+  let previousLang = null;
+  for (const item of items) {
+    const lang = normalizeLanguageCode(item.lang || "");
+    // Mark direction changes so a two-way conversation reads as turns.
+    if (lang && previousLang !== null && lang !== previousLang) {
+      const tag = document.createElement("span");
+      tag.className = "caption-dir-tag";
+      tag.textContent = getLanguageName(lang);
+      element.append(tag);
+    }
+    if (lang) previousLang = lang;
+
     const line = document.createElement("span");
     line.className = "caption-line";
-    // Finished segments are correctable; the in-flight tail is not.
-    if (options.editable && index < segmentCount) line.classList.add("editable-line");
-    line.textContent = value;
+    if (item.done) line.classList.add("done-line");
+    if (options.editable && item.done) line.classList.add("editable-line");
+    if (lang) line.dataset.lang = lang;
+    renderLineContent(line, item.text);
     element.append(line);
-  });
+  }
+}
+
+// Numbers, prices, times and phone-like sequences are where translation
+// mistakes cost the most - make them stand out.
+const NUMERIC_RUN = /[$€¥£₩฿]\s?\d[\d.,:\/\-\s]*\d%?|[$€¥£₩฿]\s?\d%?|\d[\d.,:\/\-]*\d\s?[%元块美金円원]?|\d\s?[%元块美金円원]?/g;
+
+function renderLineContent(line, text) {
+  const value = String(text || "");
+  let lastIndex = 0;
+  for (const match of value.matchAll(NUMERIC_RUN)) {
+    if (match.index > lastIndex) line.append(document.createTextNode(value.slice(lastIndex, match.index)));
+    const strong = document.createElement("strong");
+    strong.className = "caption-figure";
+    strong.textContent = match[0];
+    line.append(strong);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < value.length) line.append(document.createTextNode(value.slice(lastIndex)));
 }
 
 function renderCaptions() {
@@ -1240,10 +1341,12 @@ function scheduleSessionReconnect(target) {
   // A second chain defeats the backoff and can trip upstream rate limits.
   if (pendingReconnects.has(key)) return;
 
-  // While the page is hidden the mic is usually suspended, so a reconnected
-  // session would just be idle-closed again in seconds. The visibilitychange
-  // handler revives dead channels when the user comes back.
-  if (document.hidden) return;
+  // If the page is hidden AND the mic is not actually capturing (phone
+  // locked, app switched away), a reconnected session would just be
+  // idle-closed again; the visibilitychange handler revives channels on
+  // return. But a merely occluded desktop window with a live mic must keep
+  // reconnecting - macOS Chrome reports covered windows as hidden too.
+  if (document.hidden && state.mic?.context?.state !== "running") return;
 
   const now = Date.now();
   const history = (reconnectHistory.get(key) || []).filter((at) => now - at < 120000);
@@ -1362,11 +1465,6 @@ async function startInterpreter() {
 
   try {
     state.player = state.player || new AudioPlayer();
-    await state.player.init();
-    state.player.setVolume(Number(elements.volume.value) / 100);
-
-    await Promise.all(getInitialSessionTargets().map((language) => ensureSessionForTarget(language)));
-
     state.mic = new MicrophoneStreamer(
       (base64Audio) => {
         metrics.voiceChunks += 1;
@@ -1380,7 +1478,15 @@ async function startInterpreter() {
         onBargeIn: ECHO_GATE_ENABLED ? (active) => state.player?.duck(active) : null,
       },
     );
-    await state.mic.start();
+
+    // Mic permission/device startup, channel connects and player init are
+    // independent; running them in parallel cuts start latency roughly in
+    // half. Audio captured before a channel is ready is dropped harmlessly.
+    await Promise.all([
+      state.player.init().then(() => state.player.setVolume(Number(elements.volume.value) / 100)),
+      Promise.all(getInitialSessionTargets().map((language) => ensureSessionForTarget(language))),
+      state.mic.start(),
+    ]);
 
     metrics.liveStartedAt = Date.now();
     metrics.micStartedAt = metrics.liveStartedAt;
@@ -1430,6 +1536,7 @@ function stopInterpreter(options = {}) {
   state.sessionNonce += 1;
   reconnectHistory.clear();
   pendingReconnects.clear();
+  flushSessionToHistory();
   releaseWakeLock();
   state.mic?.stop();
   state.mic = null;
@@ -1635,6 +1742,7 @@ class GeminiTranslateSession {
     this.readyResolve = null;
     this.readyReject = null;
     this.errorReported = false;
+    this.closeHandled = false;
     this.createdAt = Date.now();
     this.lastDrainAt = Date.now();
   }
@@ -1680,31 +1788,35 @@ class GeminiTranslateSession {
         this.emitError(error.message);
         if (!this.isReady) this.readyReject?.(error);
       };
-      socket.onclose = (event) => {
-        const wasReady = this.isReady;
-        this.isOpen = false;
-        this.isReady = false;
-        this.closed = true;
-        const reason = String(event?.reason || "").slice(0, 140);
-        if (!this.manualClose) {
-          // Keep the upstream close reason visible in metrics; "quota" vs
-          // "idle" vs network tells completely different stories.
-          postMetric("channel_closed", {
-            targetLanguage: this.target.code,
-            closeCode: event?.code || 0,
-            closeReason: reason,
-            wasReady,
-          });
-        }
-        if (!this.manualClose && !wasReady) {
-          this.readyReject?.(new Error(`${this.target.name} 通道已关闭${reason ? `：${reason}` : ""}`));
-        }
-        updateSessionStats();
-        if (!this.manualClose) {
-          this.onEvent({ type: "closed", target: this.target, sessionIndex: this.index, session: this });
-        }
-      };
+      socket.onclose = (event) => this.handleClose(event);
     });
+  }
+
+  handleClose(event) {
+    if (this.closeHandled) return;
+    this.closeHandled = true;
+    const wasReady = this.isReady;
+    this.isOpen = false;
+    this.isReady = false;
+    this.closed = true;
+    const reason = String(event?.reason || "").slice(0, 140);
+    if (!this.manualClose) {
+      // Keep the upstream close reason visible in metrics; "quota" vs
+      // "idle" vs network tells completely different stories.
+      postMetric("channel_closed", {
+        targetLanguage: this.target.code,
+        closeCode: event?.code || 0,
+        closeReason: reason,
+        wasReady,
+      });
+    }
+    if (!this.manualClose && !wasReady) {
+      this.readyReject?.(new Error(`${this.target.name} 通道已关闭${reason ? `：${reason}` : ""}`));
+    }
+    updateSessionStats();
+    if (!this.manualClose) {
+      this.onEvent({ type: "closed", target: this.target, sessionIndex: this.index, session: this });
+    }
   }
 
   emitError(message) {
@@ -1797,6 +1909,14 @@ class GeminiTranslateSession {
 
   sendAudio(base64Audio) {
     if (!this.isReady) return;
+    const readyState = this.socket?.readyState;
+    // A close handshake can stall for up to a minute behind multi-hop
+    // proxies; Chrome only fires onclose after its timeout. For us a
+    // CLOSING socket is already dead - handle it now, not in 60s.
+    if (readyState === WebSocket.CLOSING || readyState === WebSocket.CLOSED) {
+      this.handleClose({ code: 1006, reason: "close handshake stalled" });
+      return;
+    }
     const buffered = this.socket?.bufferedAmount || 0;
     const now = Date.now();
     if (buffered < 16384) this.lastDrainAt = now;
@@ -1870,18 +1990,29 @@ class MicrophoneStreamer {
 
   async start() {
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("浏览器不支持麦克风");
+      throw new Error("此浏览器不支持麦克风 · Mic not supported in this browser");
     }
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: { ideal: 1 },
-        sampleRate: { ideal: MIC_SAMPLE_RATE },
-      },
-    });
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: { ideal: 1 },
+          sampleRate: { ideal: MIC_SAMPLE_RATE },
+        },
+      });
+    } catch (error) {
+      const name = error?.name || "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        throw new Error("麦克风权限被拒绝，请在浏览器设置里允许后重试 · Mic access denied");
+      }
+      if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        throw new Error("没有检测到麦克风 · No microphone found");
+      }
+      throw error;
+    }
 
     this.context = createAudioContext({ sampleRate: MIC_SAMPLE_RATE, latencyHint: "interactive" });
     this.inputSampleRate = this.context.sampleRate;
@@ -2047,6 +2178,8 @@ class AudioPlayer {
     this.playbackEndsAt = 0;
     this.volume = 0.92;
     this.ducked = false;
+    this.pendingChunks = [];
+    this.flushTimer = null;
   }
 
   isPlaying() {
@@ -2080,9 +2213,33 @@ class AudioPlayer {
     await this.context.resume();
   }
 
-  async play(base64Audio) {
+  play(base64Audio) {
     const durationMs = AudioPlayer.getBase64PcmDurationMs(base64Audio);
+    const startingFresh = !this.isPlaying() && !this.flushTimer;
     this.playbackEndsAt = Math.max(this.playbackEndsAt, Date.now()) + durationMs;
+    this.pendingChunks.push(base64Audio);
+    if (this.flushTimer) return;
+    // Small jitter buffer at utterance start so network hiccups do not
+    // fragment the speech; mid-stream chunks flush immediately.
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushPending();
+    }, startingFresh ? 140 : 0);
+  }
+
+  async flushPending() {
+    const chunks = this.pendingChunks;
+    this.pendingChunks = [];
+    for (const chunk of chunks) {
+      try {
+        await this.playChunk(chunk);
+      } catch (error) {
+        console.error("playback chunk failed", error);
+      }
+    }
+  }
+
+  async playChunk(base64Audio) {
     await this.init();
     if (this.context.state === "suspended") await this.context.resume();
     const bytes = base64ToBytes(base64Audio);
@@ -2153,6 +2310,11 @@ class AudioPlayer {
     this.sources.clear();
     this.fallbackPlayTime = this.context?.currentTime || 0;
     this.playbackEndsAt = 0;
+    this.pendingChunks = [];
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
   }
 }
 
@@ -2173,6 +2335,7 @@ function setMode(mode, options = {}) {
   document.body.classList.toggle("text-mode", next === "text");
   elements.modeConversationBtn.classList.toggle("active", next === "conversation");
   elements.modeTextBtn.classList.toggle("active", next === "text");
+  elements.typeConsole.hidden = next !== "text";
 }
 
 // Correction flow: tap a recognized line, fix it, re-translate via the
@@ -2191,6 +2354,7 @@ function inferSourceLanguage(text) {
 }
 
 function openEditSheet(text) {
+  if (typeof closeTransSheet === "function") closeTransSheet();
   editState.originalText = text;
   elements.editSheetInput.value = text;
   elements.editSheetConfirm.textContent = "重新翻译";
@@ -2228,12 +2392,13 @@ async function confirmEditSheet() {
     const data = await response.json();
 
     const sourceBucket = state.captions.source;
-    const index = sourceBucket.segments.lastIndexOf(original);
-    if (index >= 0) sourceBucket.segments[index] = edited;
-    else sourceBucket.segments.push(edited);
+    const index = sourceBucket.segments.map((segment) => segment.text).lastIndexOf(original);
+    if (index >= 0) sourceBucket.segments[index] = { ...sourceBucket.segments[index], text: edited };
+    else sourceBucket.segments.push({ text: edited, lang: normalizeLanguageCode(sourceCode) });
 
     const outputBucket = state.captions.output;
-    outputBucket.segments.push(`✎ ${String(data.translation || "").trim()}`);
+    outputBucket.segments.push({ text: `✎ ${String(data.translation || "").trim()}`, lang: target.code });
+    logSessionEntry("output", `✎ ${String(data.translation || "").trim()}`, target.code);
     if (outputBucket.segments.length > 120) outputBucket.segments.splice(0, outputBucket.segments.length - 120);
     outputBucket.updatedAt = Date.now();
     document.body.classList.add("has-captions");
@@ -2257,6 +2422,391 @@ elements.sourceCaption.addEventListener("click", (event) => {
 });
 elements.editSheetCancel.addEventListener("click", closeEditSheet);
 elements.editSheetConfirm.addEventListener("click", confirmEditSheet);
+
+// ---- Session history (localStorage) ----
+const HISTORY_KEY = "liveTranslate.history";
+const sessionLog = { startedAt: 0, entries: [] };
+let historyOpenSessionId = null;
+
+function logSessionEntry(kind, text, lang) {
+  const value = String(text || "").trim();
+  if (!value) return;
+  if (!sessionLog.startedAt) sessionLog.startedAt = Date.now();
+  sessionLog.entries.push({ k: kind === "output" ? "o" : "s", t: value, l: lang || "", at: Date.now() });
+  if (sessionLog.entries.length > 500) sessionLog.entries.splice(0, sessionLog.entries.length - 500);
+}
+
+function readHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(sessions) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(sessions.slice(0, 30)));
+  } catch {
+    // Storage full or blocked - drop oldest and retry once.
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(sessions.slice(0, 10)));
+    } catch {
+      // Give up quietly.
+    }
+  }
+}
+
+function flushSessionToHistory() {
+  if (!sessionLog.entries.length) return;
+  const sessions = readHistory();
+  sessions.unshift({
+    id: `h-${sessionLog.startedAt}`,
+    startedAt: sessionLog.startedAt,
+    endedAt: Date.now(),
+    pair: `${state.primaryLanguage.name} ⇄ ${state.counterpartLanguage.name}`,
+    entries: sessionLog.entries,
+  });
+  writeHistory(sessions);
+  sessionLog.startedAt = 0;
+  sessionLog.entries = [];
+}
+
+function formatHistoryText(session) {
+  const started = new Date(session.startedAt);
+  const header = `Live Translate · ${started.toLocaleString()} · ${session.pair}`;
+  const lines = session.entries.map((entry) => `${entry.k === "o" ? "译" : "原"}｜${entry.t}`);
+  return [header, "", ...lines].join("\n");
+}
+
+function renderHistoryList() {
+  const sessions = readHistory();
+  elements.historyDetail.hidden = true;
+  elements.historyList.hidden = false;
+  elements.historyTitle.textContent = "会话记录 · HISTORY";
+  elements.historyList.replaceChildren();
+
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "history-empty";
+    empty.textContent = "还没有会话记录。完成一次翻译后，这里会自动保存文字记录。";
+    elements.historyList.append(empty);
+    return;
+  }
+
+  for (const session of sessions) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "history-card";
+    const meta = document.createElement("span");
+    meta.className = "history-card-meta";
+    const started = new Date(session.startedAt);
+    meta.textContent = `${started.toLocaleDateString()} ${started.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${session.pair} · ${session.entries.length} 条`;
+    const preview = document.createElement("span");
+    preview.className = "history-card-preview";
+    preview.textContent = session.entries.slice(0, 2).map((entry) => entry.t).join(" / ") || "(空)";
+    card.append(meta, preview);
+    card.addEventListener("click", () => renderHistoryDetail(session.id));
+    elements.historyList.append(card);
+  }
+}
+
+function renderHistoryDetail(sessionId) {
+  const session = readHistory().find((item) => item.id === sessionId);
+  if (!session) return;
+  historyOpenSessionId = sessionId;
+  elements.historyList.hidden = true;
+  elements.historyDetail.hidden = false;
+  const started = new Date(session.startedAt);
+  elements.historyTitle.textContent = `${started.toLocaleDateString()} · ${session.pair}`;
+  elements.historyEntries.replaceChildren();
+  for (const entry of session.entries) {
+    const row = document.createElement("div");
+    row.className = `history-entry ${entry.k === "o" ? "output" : "source"}`;
+    const tag = document.createElement("span");
+    tag.className = "history-entry-tag";
+    tag.textContent = entry.k === "o" ? `译 · ${getLanguageName(entry.l)}` : `原 · ${getLanguageName(entry.l)}`;
+    const text = document.createElement("span");
+    text.className = "history-entry-text";
+    text.textContent = entry.t;
+    row.append(tag, text);
+    elements.historyEntries.append(row);
+  }
+}
+
+function openHistoryPanel() {
+  flushSessionToHistory();
+  renderHistoryList();
+  elements.historyPanel.hidden = false;
+}
+
+function closeHistoryPanel() {
+  if (!elements.historyDetail.hidden) {
+    historyOpenSessionId = null;
+    renderHistoryList();
+    return;
+  }
+  elements.historyPanel.hidden = true;
+}
+
+function currentHistorySession() {
+  return readHistory().find((item) => item.id === historyOpenSessionId) || null;
+}
+
+elements.historyBtn.addEventListener("click", openHistoryPanel);
+elements.historyCloseBtn.addEventListener("click", closeHistoryPanel);
+
+elements.historyCopyBtn.addEventListener("click", async () => {
+  const session = currentHistorySession();
+  if (!session) return;
+  try {
+    await navigator.clipboard.writeText(formatHistoryText(session));
+    elements.historyCopyBtn.textContent = "已复制";
+    setTimeout(() => (elements.historyCopyBtn.textContent = "复制全文"), 1500);
+  } catch {
+    elements.historyCopyBtn.textContent = "复制失败";
+    setTimeout(() => (elements.historyCopyBtn.textContent = "复制全文"), 1500);
+  }
+});
+
+elements.historyShareBtn.addEventListener("click", async () => {
+  const session = currentHistorySession();
+  if (!session) return;
+  const text = formatHistoryText(session);
+  if (navigator.share) {
+    try {
+      await navigator.share({ text });
+    } catch {
+      // User cancelled the share sheet.
+    }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    elements.historyShareBtn.textContent = "已复制";
+    setTimeout(() => (elements.historyShareBtn.textContent = "分享"), 1500);
+  } catch {
+    // Ignore.
+  }
+});
+
+elements.historyDownloadBtn.addEventListener("click", () => {
+  const session = currentHistorySession();
+  if (!session) return;
+  const blob = new Blob([formatHistoryText(session)], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `live-translate-${new Date(session.startedAt).toISOString().slice(0, 16).replace(/[T:]/g, "-")}.txt`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+});
+
+elements.historyDeleteBtn.addEventListener("click", () => {
+  const session = currentHistorySession();
+  if (!session) return;
+  writeHistory(readHistory().filter((item) => item.id !== session.id));
+  historyOpenSessionId = null;
+  renderHistoryList();
+});
+
+// ---- Photo translation ----
+async function fileToJpegBase64(file, maxDim = 1280) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.82).split(",")[1];
+}
+
+async function handlePhotoTranslation(file) {
+  if (!file) return;
+  elements.photoBtn.disabled = true;
+  elements.photoBtn.textContent = "识别中…";
+
+  try {
+    const imageBase64 = await fileToJpegBase64(file);
+    const response = await fetch("/api/translate-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        imageBase64,
+        mimeType: "image/jpeg",
+        primaryLanguageCode: state.primaryLanguage.code,
+        counterpartLanguageCode: state.counterpartLanguage.code,
+      }),
+    });
+    if (!response.ok) throw new Error(`image translate failed: ${response.status}`);
+    const data = await response.json();
+
+    if (!data.originalText && !data.translation) {
+      elements.photoBtn.textContent = "未识别到文字";
+      setTimeout(() => (elements.photoBtn.textContent = "拍照翻译"), 1800);
+      return;
+    }
+
+    const sourceLang = normalizeLanguageCode(data.sourceLanguageCode) || "";
+    const targetLang = normalizeLanguageCode(data.targetLanguageCode) || state.activeTargetCode;
+    state.captions.source.segments.push({ text: data.originalText, lang: sourceLang });
+    state.captions.output.segments.push({ text: data.translation, lang: targetLang });
+    logSessionEntry("source", data.originalText, sourceLang);
+    logSessionEntry("output", data.translation, targetLang);
+    document.body.classList.add("has-captions");
+    renderCaptions();
+    postMetric("photo_translate", { targetLanguage: targetLang });
+    elements.photoBtn.textContent = "拍照翻译";
+  } catch (error) {
+    console.error(error);
+    recordMetricError(error, { stage: "photo-translate" });
+    elements.photoBtn.textContent = "失败，重试";
+    setTimeout(() => (elements.photoBtn.textContent = "拍照翻译"), 1800);
+  } finally {
+    elements.photoBtn.disabled = false;
+    elements.photoInput.value = "";
+  }
+}
+
+elements.photoBtn.addEventListener("click", () => elements.photoInput.click());
+elements.photoInput.addEventListener("change", () => handlePhotoTranslation(elements.photoInput.files?.[0]));
+
+// ---- Translation line actions: replay + back-translation ----
+const SPEECH_LANG_TAGS = new Map([
+  ["zh-Hans", "zh-CN"],
+  ["zh-Hant", "zh-TW"],
+  ["en", "en-US"],
+  ["ja", "ja-JP"],
+  ["ko", "ko-KR"],
+  ["es", "es-ES"],
+  ["fr", "fr-FR"],
+  ["de", "de-DE"],
+  ["it", "it-IT"],
+  ["pt-BR", "pt-BR"],
+  ["ru", "ru-RU"],
+]);
+
+const transSheetState = { text: "", lang: "" };
+
+function openTransSheet(text, lang) {
+  closeEditSheet();
+  transSheetState.text = text;
+  transSheetState.lang = lang || "";
+  elements.transSheetText.textContent = text;
+  elements.transSheetBack.hidden = true;
+  elements.transSheetBack.textContent = "";
+  elements.transSheetBackBtn.textContent = "回译确认";
+  elements.transSheet.hidden = false;
+}
+
+function closeTransSheet() {
+  elements.transSheet.hidden = true;
+  try {
+    window.speechSynthesis?.cancel();
+  } catch {
+    // Ignore.
+  }
+}
+
+elements.translationCaption.addEventListener("click", (event) => {
+  const line = event.target.closest(".caption-line.done-line");
+  if (!line) return;
+  openTransSheet(line.textContent, line.dataset.lang || "");
+});
+
+elements.transSheetClose.addEventListener("click", closeTransSheet);
+
+elements.transSheetReplay.addEventListener("click", () => {
+  if (!transSheetState.text || !window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(transSheetState.text.replace(/^✎\s*/, ""));
+  utterance.lang = SPEECH_LANG_TAGS.get(transSheetState.lang) || transSheetState.lang || "en-US";
+  utterance.rate = 0.95;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+});
+
+elements.transSheetBackBtn.addEventListener("click", async () => {
+  const text = transSheetState.text.replace(/^✎\s*/, "");
+  if (!text) return;
+  const button = elements.transSheetBackBtn;
+  button.disabled = true;
+  button.textContent = "…";
+  try {
+    // Translate the translation back into the "other" language of the pair
+    // so the speaker can sanity-check what the counterpart actually heard.
+    const backTarget = sameLanguage(transSheetState.lang, state.primaryLanguage.code)
+      ? state.counterpartLanguage
+      : state.primaryLanguage;
+    const response = await fetch("/api/translate-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, targetLanguageCode: backTarget.code }),
+    });
+    if (!response.ok) throw new Error(`back translate failed: ${response.status}`);
+    const data = await response.json();
+    elements.transSheetBack.textContent = `回译 · ${String(data.translation || "").trim()}`;
+    elements.transSheetBack.hidden = false;
+    button.textContent = "回译确认";
+  } catch (error) {
+    console.error(error);
+    button.textContent = "重试";
+  } finally {
+    button.disabled = false;
+  }
+});
+
+async function submitTypedTranslation() {
+  const text = elements.typeInput.value.trim();
+  if (!text || elements.typeSendBtn.disabled) return;
+
+  elements.typeSendBtn.disabled = true;
+  elements.typeSendBtn.textContent = "…";
+
+  try {
+    const sourceCode = inferSourceLanguage(text) || state.primaryLanguage.code;
+    const target = chooseTargetForSource(sourceCode);
+    const response = await fetch("/api/translate-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, targetLanguageCode: target.code }),
+    });
+    if (!response.ok) throw new Error(`typed translate failed: ${response.status}`);
+    const data = await response.json();
+
+    state.activeSourceCode = normalizeLanguageCode(data.sourceLanguageCode) || normalizeLanguageCode(sourceCode);
+    state.activeTargetCode = target.code;
+    state.captions.source.segments.push({ text, lang: state.activeSourceCode });
+    state.captions.output.segments.push({ text: String(data.translation || "").trim(), lang: target.code });
+    logSessionEntry("source", text, state.activeSourceCode);
+    logSessionEntry("output", String(data.translation || "").trim(), target.code);
+    document.body.classList.add("has-captions");
+    updateCaptionLabels();
+    renderCaptions();
+    elements.typeInput.value = "";
+    postMetric("typed_translate", { targetLanguage: target.code });
+  } catch (error) {
+    console.error(error);
+    recordMetricError(error, { stage: "typed-translate" });
+  } finally {
+    elements.typeSendBtn.disabled = false;
+    elements.typeSendBtn.textContent = "→";
+  }
+}
+
+elements.typeConsole.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitTypedTranslation();
+});
+
+// Face-to-face mode: rotate the translation panel 180° so the person across
+// the table can read it while the phone lies between the two speakers.
+elements.flipBtn.addEventListener("click", () => {
+  const flipped = document.body.classList.toggle("flip-view");
+  elements.flipBtn.classList.toggle("active", flipped);
+  elements.flipBtn.setAttribute("aria-pressed", String(flipped));
+  scrollToLatest();
+});
 
 function chooseMode(mode) {
   document.body.classList.remove("choose-mode");
@@ -2329,7 +2879,20 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-window.addEventListener("beforeunload", () => stopInterpreter({ keepStatus: true, beacon: true }));
+window.addEventListener("beforeunload", () => {
+  stopInterpreter({ keepStatus: true, beacon: true });
+  flushSessionToHistory();
+});
+
+// Build the counterpart selector from the full language list.
+elements.targetLanguageBtn.replaceChildren(
+  ...counterpartLanguages.map((language) => {
+    const option = document.createElement("option");
+    option.value = language.code;
+    option.textContent = language.name;
+    return option;
+  }),
+);
 
 renderCaptions();
 updateReadyState();

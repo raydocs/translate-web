@@ -20,6 +20,17 @@ const elements = {
   browsers: document.querySelector("#browsers"),
   recentSessions: document.querySelector("#recentSessions"),
   recentErrors: document.querySelector("#recentErrors"),
+  featureUsage: document.querySelector("#featureUsage"),
+  closeReasons: document.querySelector("#closeReasons"),
+};
+
+const FEATURE_LABELS = {
+  correction: "修正识别",
+  typed_translate: "打字翻译",
+  photo_translate: "拍照翻译",
+  reconnect: "自动重连",
+  session_rotate: "会话轮换",
+  channel_closed: "通道关闭",
 };
 
 const TOKEN_KEY = "liveTranslate.adminToken";
@@ -135,8 +146,28 @@ function render(data) {
     count: (row) => Number(row.sessions || 0),
   });
   renderBrowsers(data.browsers || []);
+  renderFeatureUsage(data.featureUsage || []);
+  renderStack(elements.closeReasons, data.closeReasons || [], {
+    label: (row) => row.reason || "(未知)",
+    value: (row) => `${formatNumber(row.n)} 次`,
+    count: (row) => Number(row.n || 0),
+  });
   renderRecentSessions(data.recentSessions || []);
   renderRecentErrors(data.recentErrors || []);
+}
+
+function renderFeatureUsage(rows) {
+  elements.featureUsage.replaceChildren();
+  if (!rows.length) {
+    elements.featureUsage.append(emptyNode("该时间范围内还没有功能使用记录"));
+    return;
+  }
+  for (const row of rows) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = `${FEATURE_LABELS[row.event_type] || row.event_type} ${formatNumber(row.n)}`;
+    elements.featureUsage.append(chip);
+  }
 }
 
 function renderDailyChart(rows) {

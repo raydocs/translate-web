@@ -1,6 +1,7 @@
 const TEXT_MODEL = "gemini-3.5-flash";
+const MAX_IMAGE_BASE64 = 3_500_000; // ~2.6MB binary, plenty after client resize
 
-const SUPPORTED_TARGETS = new Map([
+const LANGUAGE_NAMES = new Map([
   ["zh-Hans", "Simplified Chinese (简体中文)"],
   ["zh-Hant", "Traditional Chinese (繁體中文)"],
   ["en", "English"],
@@ -11,7 +12,6 @@ const SUPPORTED_TARGETS = new Map([
   ["de", "German"],
   ["it", "Italian"],
   ["pt-BR", "Brazilian Portuguese"],
-  ["pt-PT", "European Portuguese"],
   ["ru", "Russian"],
   ["ar", "Arabic"],
   ["hi", "Hindi"],
@@ -55,18 +55,20 @@ function json(data, status = 200) {
   });
 }
 
-function buildPrompt(text, targetName) {
-  return `You are a professional translator. Translate the user text into ${targetName}.
+function buildPrompt(primaryName, counterpartName) {
+  return `You are a translator looking at a photo (menu, sign, document, screen, etc.).
+
+1. Extract the meaningful text from the image, in reading order. Ignore watermarks and decorative fragments.
+2. If the extracted text is mostly in ${primaryName}, translate it into ${counterpartName}. Otherwise translate it into ${primaryName}.
 
 Return only strict JSON:
-{"translation":"...","sourceLanguageCode":"BCP-47 code of the detected source language"}
+{"originalText":"...","translation":"...","sourceLanguageCode":"BCP-47","targetLanguageCode":"BCP-47"}
 
 Rules:
-- Preserve meaning, tone and register; keep numbers, names and formatting.
-- If the text is already in the target language, return it unchanged as the translation.
-- No markdown, no comments, no extra keys.
-
-User text: ${JSON.stringify(text)}`;
+- Keep line breaks between distinct items (menu dishes, sign lines).
+- Keep numbers, prices and units exactly as written.
+- If there is no readable text, return {"originalText":"","translation":"","sourceLanguageCode":"","targetLanguageCode":""}.
+- No markdown, no extra keys.`;
 }
 
 export const onRequestPost = async ({ request, env }) => {
@@ -81,12 +83,16 @@ export const onRequestPost = async ({ request, env }) => {
     return json({ error: "Expected JSON body." }, 400);
   }
 
-  const text = String(body.text || "").trim().slice(0, 2000);
-  const targetLanguageCode = String(body.targetLanguageCode || "").trim();
-  if (!text) return json({ error: "Missing text." }, 400);
-  if (!SUPPORTED_TARGETS.has(targetLanguageCode)) {
-    return json({ error: "Unsupported targetLanguageCode." }, 400);
-  }
+  const imageBase64 = String(body.imageBase64 || "");
+  const mimeType = String(body.mimeType || "image/jpeg");
+  const primaryCode = String(body.primaryLanguageCode || "zh-Hans");
+  const counterpartCode = String(body.counterpartLanguageCode || "en");
+
+  if (!imageBase64) return json({ error: "Missing imageBase64." }, 400);
+  if (imageBase64.length > MAX_IMAGE_BASE64) return json({ error: "Image too large." }, 413);
+
+  const primaryName = LANGUAGE_NAMES.get(primaryCode) || "Simplified Chinese (简体中文)";
+  const counterpartName = LANGUAGE_NAMES.get(counterpartCode) || "English";
 
   const response = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`,
@@ -97,9 +103,16 @@ export const onRequestPost = async ({ request, env }) => {
         "x-goog-api-key": env.GEMINI_API_KEY,
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(text, SUPPORTED_TARGETS.get(targetLanguageCode)) }] }],
+        contents: [
+          {
+            parts: [
+              { inline_data: { mime_type: mimeType, data: imageBase64 } },
+              { text: buildPrompt(primaryName, counterpartName) },
+            ],
+          },
+        ],
         generationConfig: {
-          temperature: 0.2,
+          temperature: 0.1,
           responseMimeType: "application/json",
         },
       }),
@@ -108,8 +121,8 @@ export const onRequestPost = async ({ request, env }) => {
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("Gemini text translation failed", response.status, errorText.slice(0, 300));
-    return json({ error: "Translation failed." }, 502);
+    console.error("Gemini image translation failed", response.status, errorText.slice(0, 300));
+    return json({ error: "Image translation failed." }, 502);
   }
 
   const data = await response.json();
@@ -122,13 +135,11 @@ export const onRequestPost = async ({ request, env }) => {
     return json({ error: "Translator returned invalid JSON." }, 502);
   }
 
-  const translation = String(parsed.translation || "").trim();
-  if (!translation) return json({ error: "Empty translation." }, 502);
-
   return json({
-    translation,
+    originalText: String(parsed.originalText || "").trim(),
+    translation: String(parsed.translation || "").trim(),
     sourceLanguageCode: String(parsed.sourceLanguageCode || "").trim(),
-    targetLanguageCode,
+    targetLanguageCode: String(parsed.targetLanguageCode || "").trim(),
   });
 };
 

@@ -127,7 +127,29 @@ function bridgeGeminiSocket(clientSocket, upstreamSocket, targetLanguageCode) {
 // every Gemini call originates from a region Google supports, regardless of
 // which edge colo the end user hit.
 export class GeminiRelay {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+
+  // Keep the isolate warm while the app is in active use; go back to sleep
+  // after a day of inactivity so an abandoned deployment costs nothing.
+  async alarm() {
+    const lastUsed = (await this.ctx.storage.get("lastUsed")) || 0;
+    if (Date.now() - lastUsed < 24 * 60 * 60 * 1000) {
+      await this.ctx.storage.setAlarm(Date.now() + 4 * 60 * 1000);
+    }
+  }
+
   async fetch(request) {
+    this.ctx.storage.put("lastUsed", Date.now()).catch(() => {});
+    this.ctx.storage
+      .getAlarm()
+      .then((current) => {
+        if (current === null) return this.ctx.storage.setAlarm(Date.now() + 4 * 60 * 1000);
+        return null;
+      })
+      .catch(() => {});
+
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return json({ error: "Expected WebSocket upgrade." }, 426);
     }

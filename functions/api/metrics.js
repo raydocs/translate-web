@@ -234,7 +234,7 @@ export const onRequestGet = async ({ request, env }) => {
   const chartStart = now - 14 * 24 * 60 * 60 * 1000;
 
   try {
-    const [last24h, range, daily, languagePairs, devices, browsers, recentErrors, recentSessions] = await Promise.all([
+    const [last24h, range, daily, languagePairs, devices, browsers, recentErrors, recentSessions, featureUsage, closeReasons] = await Promise.all([
       queryFirst(
         db,
         `
@@ -343,6 +343,29 @@ export const onRequestGet = async ({ request, env }) => {
           LIMIT 24
         `,
       ),
+      queryAll(
+        db,
+        `
+          SELECT event_type, COUNT(*) AS n
+          FROM metric_events
+          WHERE created_at_ms >= ? AND event_type IN ('correction', 'typed_translate', 'photo_translate', 'reconnect', 'session_rotate', 'channel_closed')
+          GROUP BY event_type
+          ORDER BY n DESC
+        `,
+        rangeStart,
+      ),
+      queryAll(
+        db,
+        `
+          SELECT COALESCE(NULLIF(json_extract(details_json, '$.closeReason'), ''), '(网络中断/无原因)') AS reason, COUNT(*) AS n
+          FROM metric_events
+          WHERE event_type = 'channel_closed' AND created_at_ms >= ?
+          GROUP BY reason
+          ORDER BY n DESC
+          LIMIT 8
+        `,
+        rangeStart,
+      ),
     ]);
 
     return json({
@@ -356,6 +379,8 @@ export const onRequestGet = async ({ request, env }) => {
       browsers: browsers.map(normalizeMetricRow),
       recentErrors: recentErrors.map(normalizeMetricRow),
       recentSessions: recentSessions.map(normalizeMetricRow),
+      featureUsage: featureUsage.map(normalizeMetricRow),
+      closeReasons: closeReasons.map(normalizeMetricRow),
     });
   } catch (error) {
     console.error("Metrics query failed", error?.message || error);

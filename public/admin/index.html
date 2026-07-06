@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0f17" />
     <title>Translate Monitor</title>
-    <link rel="stylesheet" href="/admin/admin.css?v=20260703-monitor1" />
+    <link rel="stylesheet" href="/admin/admin.css?v=20260706-monitor2" />
   </head>
   <body>
     <main class="dashboard-shell">
@@ -85,6 +85,22 @@
         </section>
 
         <section class="grid-two">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>功能使用</h2>
+            </div>
+            <div id="featureUsage" class="chips"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>通道关闭原因</h2>
+            </div>
+            <div id="closeReasons" class="stack-list compact"></div>
+          </article>
+        </section>
+
+        <section class="grid-two">
           <article class="panel table-panel">
             <div class="panel-head">
               <h2>最近会话</h2>
@@ -102,6 +118,6 @@
       </section>
     </main>
 
-    <script src="/admin/admin.js?v=20260703-monitor1" type="module"></script>
+    <script src="/admin/admin.js?v=20260706-monitor2" type="module"></script>
   </body>
 </html>

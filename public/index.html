@@ -6,13 +6,13 @@
     <meta name="theme-color" content="#ffffff" />
     <title>Live Translate</title>
     <meta name="description" content="Gemini 3.5 Live Translate 实时语音翻译。" />
-    <link rel="stylesheet" href="/styles.css?v=20260705-correct1" />
+    <link rel="stylesheet" href="/styles.css?v=20260705-phaseC1" />
   </head>
   <body>
     <main class="translate-app">
       <section class="translate-surface" aria-label="Live translation">
         <header class="language-bar">
-          <a class="nav-button back-button" href="/" aria-label="返回">‹</a>
+          <button id="historyBtn" class="nav-button history-button" type="button" aria-label="会话记录">≡</button>
           <select id="sourceLanguageBtn" class="language-select" aria-label="中文显示">
             <option value="zh-Hans">简体中文</option>
             <option value="zh-Hant">繁體中文</option>
@@ -30,24 +30,25 @@
 
         <div id="listeningPrompt" class="listening-prompt" aria-hidden="true">
           <p>Listening...</p>
-          <span>请说话...</span>
+          <span>试着说：你好，很高兴认识你 · Just start speaking</span>
         </div>
 
         <div id="modeChooser" class="mode-chooser" hidden>
-          <p class="mode-chooser-title">你需要哪种翻译？</p>
+          <p class="mode-chooser-title">你需要哪种翻译？ · CHOOSE YOUR MODE</p>
           <button id="chooseConversation" class="mode-card" type="button">
             <strong>同声传译</strong>
-            <span>双向对话 · 实时互译 · 播报翻译语音</span>
+            <span>双向对话 · 实时互译 · 播报翻译语音<br />Speech ⇄ speech, spoken aloud</span>
           </button>
           <button id="chooseText" class="mode-card" type="button">
             <strong>文字翻译</strong>
-            <span>双向对话 · 实时字幕 · 不播放语音</span>
+            <span>双向对话 · 实时字幕 · 不播放语音<br />Live captions only, no voice playback</span>
           </button>
+          <p class="mode-chooser-note">首次使用会请求麦克风权限，仅用于实时翻译 · Mic is used for live translation only</p>
         </div>
 
         <div class="text-prompt" aria-hidden="true">
           <p>文字翻译</p>
-          <span>点开始后直接对话，双方的话实时翻译成文字，不播放语音</span>
+          <span>点开始后直接对话，双方的话实时翻译成文字，不播放语音 · Speak, or type below</span>
         </div>
 
         <section class="captions" aria-live="polite">
@@ -57,7 +58,10 @@
           </article>
           <div class="divider" aria-hidden="true"></div>
           <article class="caption-block translation-block">
-            <p id="translationLabel" class="caption-label">翻译 · Auto</p>
+            <div class="caption-label-row">
+              <p id="translationLabel" class="caption-label">翻译 · Auto</p>
+              <button id="flipBtn" class="flip-btn" type="button" aria-pressed="false">对方视角</button>
+            </div>
             <div id="translationCaption" class="caption-text translation empty">…</div>
           </article>
         </section>
@@ -70,9 +74,45 @@
         </div>
         <p id="bottomStatus" class="bottom-status">Tap</p>
         <div class="bottom-actions">
+          <button id="photoBtn" class="photo-button" type="button">拍照翻译</button>
           <button id="startBtn" class="mic-button" type="button" aria-label="开始实时翻译">开始</button>
+          <span class="photo-button-spacer" aria-hidden="true"></span>
         </div>
+        <input id="photoInput" type="file" accept="image/*" capture="environment" hidden />
+        <form id="typeConsole" class="type-console" hidden>
+          <input id="typeInput" type="text" placeholder="输入文字翻译 · Type to translate" autocomplete="off" enterkeyhint="send" />
+          <button id="typeSendBtn" type="submit" aria-label="翻译">→</button>
+        </form>
       </footer>
+
+      <section id="historyPanel" class="history-panel" hidden>
+        <header class="history-head">
+          <button id="historyCloseBtn" class="nav-button" type="button" aria-label="关闭">‹</button>
+          <p id="historyTitle" class="history-title">会话记录 · HISTORY</p>
+          <span class="history-head-spacer"></span>
+        </header>
+        <div id="historyList" class="history-list"></div>
+        <div id="historyDetail" class="history-detail" hidden>
+          <div id="historyEntries" class="history-entries"></div>
+          <div class="history-actions">
+            <button id="historyCopyBtn" class="sheet-btn ghost" type="button">复制全文</button>
+            <button id="historyShareBtn" class="sheet-btn ghost" type="button">分享</button>
+            <button id="historyDownloadBtn" class="sheet-btn ghost" type="button">下载</button>
+            <button id="historyDeleteBtn" class="sheet-btn ghost danger" type="button">删除</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="transSheet" class="edit-sheet" hidden>
+        <p class="edit-sheet-label">译文 · TRANSLATION</p>
+        <p id="transSheetText" class="trans-sheet-text"></p>
+        <p id="transSheetBack" class="trans-sheet-back" hidden></p>
+        <div class="edit-sheet-actions">
+          <button id="transSheetClose" class="sheet-btn ghost" type="button">关闭</button>
+          <button id="transSheetReplay" class="sheet-btn ghost" type="button">重播语音</button>
+          <button id="transSheetBackBtn" class="sheet-btn solid" type="button">回译确认</button>
+        </div>
+      </section>
 
       <section id="editSheet" class="edit-sheet" hidden>
         <p class="edit-sheet-label">修正识别文字</p>
@@ -111,6 +151,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=20260705-correct1" type="module"></script>
+    <script src="/app.js?v=20260705-phaseC1" type="module"></script>
   </body>
 </html>
