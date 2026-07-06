@@ -3099,6 +3099,32 @@ elements.targetLanguageBtn.replaceChildren(
 const buildTag = document.querySelector("#buildTag");
 if (buildTag) buildTag.textContent = APP_BUILD;
 
+// WeChat's webview caches HTML aggressively, stranding customers on stale
+// builds. Compare against the server's version marker and self-heal with a
+// single automatic reload (guarded against loops).
+async function checkForUpdate() {
+  if (state.running) return;
+  try {
+    const response = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    const serverBuild = String(data.build || "");
+    if (!serverBuild || serverBuild === APP_BUILD) return;
+    const guardKey = "liveTranslate.reloadedFor";
+    if (sessionStorage.getItem(guardKey) === serverBuild) return;
+    sessionStorage.setItem(guardKey, serverBuild);
+    postMetric("self_update", { fromBuild: APP_BUILD, toBuild: serverBuild });
+    window.location.replace(`${window.location.pathname}?u=${Date.now()}`);
+  } catch {
+    // Offline or blocked - try again next time.
+  }
+}
+
+checkForUpdate();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkForUpdate();
+});
+
 renderCaptions();
 updateReadyState();
 setStatus(elements.connectionStatus, "offline", true);
