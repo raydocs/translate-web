@@ -9,7 +9,11 @@ const MIC_SAMPLE_RATE = 16000;
 const IS_IOS =
   /iPhone|iPad|iPod/.test(navigator.userAgent || "") ||
   (/Mac/.test(navigator.userAgent || "") && (navigator.maxTouchPoints || 0) > 1);
-const ECHO_GATE_ENABLED = IS_IOS;
+// WeChat / in-app webviews ship their own audio stacks whose echo
+// cancellation, like iOS WebKit's, does not cover Web Audio playback -
+// without the gate two sessions end up translating each other's TTS.
+const IS_INAPP_WEBVIEW = /MicroMessenger|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent || "");
+const ECHO_GATE_ENABLED = IS_IOS || IS_INAPP_WEBVIEW;
 
 function getLiveSocketUrl(targetLanguageCode) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -2693,6 +2697,8 @@ function openTransSheet(text, lang) {
   closeEditSheet();
   transSheetState.text = text;
   transSheetState.lang = lang || "";
+  // WeChat and most in-app webviews silently break speechSynthesis.
+  elements.transSheetReplay.hidden = !window.speechSynthesis || IS_INAPP_WEBVIEW;
   elements.transSheetText.textContent = text;
   elements.transSheetBack.hidden = true;
   elements.transSheetBack.textContent = "";
@@ -2788,9 +2794,15 @@ async function submitTypedTranslation() {
   } catch (error) {
     console.error(error);
     recordMetricError(error, { stage: "typed-translate" });
+    elements.typeSendBtn.textContent = "失败";
+    elements.typeInput.placeholder = "翻译失败，请重试 · Failed, try again";
+    setTimeout(() => {
+      elements.typeSendBtn.textContent = "→";
+      elements.typeInput.placeholder = "输入文字翻译 · Type to translate";
+    }, 2200);
   } finally {
     elements.typeSendBtn.disabled = false;
-    elements.typeSendBtn.textContent = "→";
+    if (elements.typeSendBtn.textContent === "…") elements.typeSendBtn.textContent = "→";
   }
 }
 
