@@ -2259,11 +2259,13 @@ class AudioPlayer {
   }
 
   pausePlayback() {
-    // Re-queue everything that has not finished sounding yet - pausing must
-    // never eat the tail of a translation.
+    // Re-queue everything that has not finished SOUNDING yet - including
+    // chunks whose bookkeeping ended moments ago but whose audio is still
+    // draining through the output pipeline. Pausing must never eat the tail.
     const now = Date.now();
-    const unplayed = this.dispatched.filter((entry) => entry.endAt > now + 60).map((entry) => entry.b64);
+    const unplayed = this.dispatched.filter((entry) => entry.endAt > now - 150).map((entry) => entry.b64);
     if (unplayed.length) this.holdQueue.unshift(...unplayed);
+    postMetric("tts_pause", { requeued: unplayed.length, queued: this.holdQueue.length });
     this.dispatched = [];
 
     this.worklet?.port.postMessage("interrupt");
@@ -2338,7 +2340,11 @@ class AudioPlayer {
 
   playThrough(base64Audio) {
     const durationMs = AudioPlayer.getBase64PcmDurationMs(base64Audio);
-    this.playbackEndsAt = Math.max(this.playbackEndsAt, Date.now()) + durationMs;
+    // A freshly started pipeline takes ~250ms (decode + worklet + output
+    // hardware) before the first sample leaves the speaker; bake that into
+    // the bookkeeping so chunk end times track physical audibility.
+    const base = Math.max(this.playbackEndsAt, Date.now() + (this.isPlaying() ? 0 : 250));
+    this.playbackEndsAt = base + durationMs;
     this.dispatched.push({ b64: base64Audio, endAt: this.playbackEndsAt });
     if (this.dispatched.length > 64) this.dispatched.shift();
     this.playChunk(base64Audio).catch((error) => console.error("playback chunk failed", error));
