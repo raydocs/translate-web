@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="390" viewBox="0 0 1200 390" role="img" aria-labelledby="title desc">
+  <title id="title">Live Translate — browser-based speech, text, and photo translation</title>
+  <desc id="desc">A bilingual conversation interface sends microphone audio through a same-origin Cloudflare WebSocket relay to Gemini Live and returns captions and translated speech.</desc>
+  <rect width="1200" height="390" rx="30" fill="#f7f8fb"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif">
+    <text x="56" y="57" font-size="15" font-weight="700" letter-spacing="3" fill="#4766e5">CLOUDFLARE PAGES · GEMINI LIVE</text>
+    <text x="56" y="133" font-size="60" font-weight="760" fill="#11182c">Live Translate</text>
+    <text x="56" y="178" font-size="24" fill="#4b556f">打开网页就能开始的双向语音、文字与拍照翻译</text>
+    <g transform="translate(56 228)" font-size="16">
+      <rect width="144" height="42" rx="21" fill="#e8ecff"/><text x="27" y="27" fill="#354fc0">同声传译</text>
+      <rect x="156" width="128" height="42" rx="21" fill="#e9f7f3"/><text x="184" y="27" fill="#23755f">实时字幕</text>
+      <rect x="296" width="128" height="42" rx="21" fill="#fff0e5"/><text x="324" y="27" fill="#ad5a1d">拍照翻译</text>
+    </g>
+    <text x="56" y="318" font-size="15" fill="#727c95">长期 API key 留在服务端；浏览器只连接同源 /api/live</text>
+  </g>
+  <g transform="translate(660 38)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif">
+    <rect width="484" height="314" rx="24" fill="#fff" stroke="#dfe3ee" stroke-width="2"/>
+    <text x="28" y="43" font-size="14" font-weight="700" fill="#66708a">简体中文</text><text x="383" y="43" font-size="14" font-weight="700" fill="#66708a">English</text>
+    <path d="M28 64H456" stroke="#e7e9f0"/>
+    <text x="28" y="97" font-size="13" fill="#8b93a7">说的 · Auto</text>
+    <text x="28" y="134" font-size="25" fill="#11182c">附近有地铁站吗？</text>
+    <path d="M28 160H456" stroke="#e7e9f0"/>
+    <text x="28" y="193" font-size="13" fill="#8b93a7">翻译 · Auto</text>
+    <text x="28" y="230" font-size="25" fill="#4766e5">Is there a subway nearby?</text>
+    <g transform="translate(32 263)" stroke="#4766e5" stroke-width="4" stroke-linecap="round">
+      <path d="M0 14V22M14 6V30M28 10V26M42 1V35M56 8V28M70 12V24M84 4V32M98 10V26M112 14V22"/>
+    </g>
+    <circle cx="416" cy="280" r="23" fill="#4766e5"/><path d="M416 266v19M408 278c0 12 16 12 16 0M416 290v7" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>
